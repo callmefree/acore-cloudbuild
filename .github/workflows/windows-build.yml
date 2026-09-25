@@ -226,44 +226,65 @@ jobs:
           $stage = Join-Path $env:GITHUB_WORKSPACE 'artifacts/AzerothCore-Win64'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-          # 1) 二进制：AC 安装到 env/dist/bin
+          # 复制约定：先 New-Item 建好目标目录，再**逐项** Copy-Item。
+          # 不能用 Copy-Item '<src>\*' <dst> -Recurse：源里既有文件又有子目录时，
+          # PowerShell 会先把 <dst> 当叶子（文件）建出来，随后复制目录就报
+          # "Container cannot be copied onto existing leaf item"（已实测踩坑）。
+          function Copy-Into([string]$src, [string]$dst) {
+              New-Item -ItemType Directory -Force -Path $dst | Out-Null
+              Get-ChildItem -LiteralPath $src -Force | ForEach-Object {
+                  Copy-Item -LiteralPath $_.FullName -Destination $dst -Recurse -Force
+              }
+          }
+          $skipExt = @('.pdb','.ilk','.exp','.lib','.obj')
+
+          # 0) 诊断：看看 env/dist 到底长什么样（安装前缀行为可能与文档不一致）
+          $dist = Join-Path $ac 'env/dist'
+          if (Test-Path $dist) {
+              Write-Host 'env/dist layout:'
+              Get-ChildItem -LiteralPath $dist -Force | ForEach-Object { Write-Host ("  {0}" -f $_.Name) }
+          } else { Write-Host 'env/dist not present' }
+
+          # 1) 二进制：优先 env/dist/bin，找不到就在 ac/ 下全搜（跳过 artifacts）
           $srcBin = Join-Path $ac 'env/dist/bin'
           if (-not (Test-Path (Join-Path $srcBin 'worldserver.exe'))) {
-              $hit = Get-ChildItem $ac -Recurse -Filter 'worldserver.exe' -ErrorAction SilentlyContinue |
+              $hit = Get-ChildItem $ac -Recurse -Filter 'worldserver.exe' -File -ErrorAction SilentlyContinue |
                   Where-Object { $_.FullName -notmatch '\\artifacts\\' } | Select-Object -First 1
               if (-not $hit) { throw "worldserver.exe not found under $ac. Build output layout changed?" }
               $srcBin = $hit.DirectoryName
               Write-Host "::warning::fallback bin dir: $srcBin"
           }
           Write-Host "bin source: $srcBin"
-          Copy-Item (Join-Path $srcBin '*') (Join-Path $stage 'bin') -Recurse -Force
+          $dstBin = Join-Path $stage 'bin'
+          New-Item -ItemType Directory -Force -Path $dstBin | Out-Null
+          Get-ChildItem -LiteralPath $srcBin -Force | Where-Object { $skipExt -notcontains $_.Extension.ToLower() } |
+              ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $dstBin -Recurse -Force }
           if (-not (Test-Path (Join-Path $stage 'bin/worldserver.exe'))) { throw 'worldserver.exe missing after copy' }
           if (-not (Test-Path (Join-Path $stage 'bin/authserver.exe')))  { throw 'authserver.exe missing after copy' }
 
           # 2) 运行期依赖：AC 链接 mysqlclient.lib，运行需 libmysql.dll
           $lm = Get-ChildItem 'C:\tools\mysql\current' -Recurse -Filter 'libmysql.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($lm) { Copy-Item $lm.FullName (Join-Path $stage 'bin') -Force; Write-Host 'packaged libmysql.dll' }
+          if ($lm) { Copy-Item -LiteralPath $lm.FullName -Destination $dstBin -Force; Write-Host 'packaged libmysql.dll' }
           else { Write-Host '::warning::libmysql.dll not found under C:\tools\mysql\current' }
 
-          # 3) 配置模板：env/dist/etc（含主配置 + modules/*.conf.dist）
-          $srcEtc = Join-Path $ac 'env/dist/etc'
-          if (Test-Path $srcEtc) {
-              Copy-Item (Join-Path $srcEtc '*') (Join-Path $stage 'etc') -Recurse -Force
-              Write-Host ("packaged etc/ ({0} files)" -f (Get-ChildItem (Join-Path $stage 'etc') -Recurse -File).Count)
-          } else {
-              Write-Host '::warning::env/dist/etc missing - deploy.ps1 需要它生成配置'
-          }
+          # 3) 配置模板：按 worldserver.conf.dist 反查所在目录（含主配置 + modules/*.conf.dist）
+          $confHit = Get-ChildItem $ac -Recurse -Filter 'worldserver.conf.dist' -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -notmatch '\\artifacts\\' } | Select-Object -First 1
+          if ($confHit) {
+              Copy-Into $confHit.DirectoryName (Join-Path $stage 'etc')
+              Write-Host ("packaged etc/ from {0} ({1} files)" -f $confHit.DirectoryName, (Get-ChildItem (Join-Path $stage 'etc') -Recurse -File).Count)
+          } else { Write-Host '::warning::worldserver.conf.dist not found - deploy.ps1 需要它生成配置' }
 
           # 4) 数据库初始数据：base + updates（本机 setup_db.ps1 直接导入）
           $sqlBase = Join-Path $ac 'data/sql/base'
           $sqlUpd  = Join-Path $ac 'data/sql/updates'
-          if (Test-Path $sqlBase) { Copy-Item $sqlBase (Join-Path $stage 'sql/base') -Recurse -Force;    Write-Host 'packaged sql/base' }
-          if (Test-Path $sqlUpd)  { Copy-Item $sqlUpd  (Join-Path $stage 'sql/updates') -Recurse -Force; Write-Host 'packaged sql/updates' }
+          if (Test-Path $sqlBase) { Copy-Into $sqlBase (Join-Path $stage 'sql/base');    Write-Host 'packaged sql/base' }
+          if (Test-Path $sqlUpd)  { Copy-Into $sqlUpd  (Join-Path $stage 'sql/updates'); Write-Host 'packaged sql/updates' }
 
           # 5) 模块源码树：保留 data/sql（模块更新器）与 conf（模块配置）
           $mods = Join-Path $ac 'modules'
           if (Test-Path $mods) {
-              Copy-Item $mods (Join-Path $stage 'modules') -Recurse -Force
+              Copy-Into $mods (Join-Path $stage 'modules')
               Write-Host ("packaged modules/ ({0} files)" -f (Get-ChildItem (Join-Path $stage 'modules') -Recurse -File).Count)
           } else { Write-Host '::warning::no modules/ produced' }
 
