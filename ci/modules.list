@@ -18,11 +18,19 @@
 mod-zone-scaling|https://github.com/firstoni-dev/mod-zone-scaling.git|main|1
 mod-item-level-scaling|https://github.com/Ildourol/mod-item-level-scaling.git|master|1
 mod-solocraft|https://github.com/azerothcore/mod-solocraft.git|master|1
-mod-solo-raids|https://github.com/TheTollski/mod-solo-raids.git|master|1
 mod-instanced-worldbosses|https://github.com/azerothcore/mod-instanced-worldbosses.git|master|1
-mod-city-siege|https://github.com/DustinHendrickson/mod-city-siege.git|main|1
-mod-gauntlet|https://github.com/ngc7052/mod-gauntlet.git|master|1
 mod-ale|https://github.com/azerothcore/mod-ale.git|master|1
+#
+# --- [X] 与当前 AC master 不兼容，实测编译失败（=0）--------------------------------
+# 2026-09-25 用 AC master(b233191) + MSVC 实测，以下三个模块编译不过（共 37 个错误）：
+#   mod-solo-raids (25 错)：WorldObject* → Unit* 转换失败，多处用了已改签名的取目标 API
+#   mod-gauntlet   (8 错)：GauntletMgr.cpp 用了 WorldSession::IsBot —— 那是 playerbots 分支才有的 API，
+#                          且用户明确"不要 bot"，与本方案冲突；另有 Shaman.cpp/TrophyHunter.cpp 语法错误
+#   mod-city-siege (4 错)：PathGenerator 已无 SetNavTerrainCost / SetExcludeFlags，NAV_GROUND_STEEP 未定义
+# 处置：首轮摘掉拿绿构建；后续若要启用，需各自 pin 到兼容的 AC 提交或打补丁。
+mod-solo-raids|https://github.com/TheTollski/mod-solo-raids.git|master|0
+mod-city-siege|https://github.com/DustinHendrickson/mod-city-siege.git|main|0
+mod-gauntlet|https://github.com/ngc7052/mod-gauntlet.git|master|0
 # mod-ale = AzerothCore Lua Engine (ALE)。AC 的 modules/CMakeLists.txt 对其有专门分支(MOD_ALE_FOUND)：
 #   静态编入时把 lualib 链进 modules 目标，并把 LuaEngine/extensions 装到 bin/lua_scripts/。
 #   Lua 不是仓库自带源码——ALE 在 CMake configure 期用 FetchContent 从 lua.org 下载，runner 需外网。
