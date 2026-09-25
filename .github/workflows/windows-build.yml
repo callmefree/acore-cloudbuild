@@ -1,0 +1,301 @@
+# =============================================================================
+#  AzerothCore (WotLK) Windows 云编译工作流
+# -----------------------------------------------------------------------------
+#  放在我们自己的空仓库（默认 acore-cloudbuild）里，工作流自己去 checkout
+#  上游 azerothcore/azerothcore-wotlk@master 编译。
+#
+#  为什么不 fork 上游：
+#    GitHub 每个账号在同一 fork 网络里只允许一个 fork。该账号已有
+#    azerothcore-wotlk-playerbot，再 POST /forks 只会返回那个既有仓库。
+#    改为"自有仓库 + checkout 上游"后，每次编的都是上游最新 master，
+#    且不产生 fork 同步负担。
+#
+#  触发：仅 workflow_dispatch（由 trigger_build.ps1 经 API 触发）。
+#    不挂 push：本仓库用 Contents API 提交文件，挂 push 会与 dispatch
+#    产生重复 run，第二个 run 发布 Release 时会撞同名 tag。
+#
+#  产物布局（zip 根）：
+#    bin/       worldserver.exe / authserver.exe / *.dll / tools / lua_scripts/
+#    etc/       worldserver.conf.dist / authserver.conf.dist / dbimport.conf.dist
+#               + modules/*.conf.dist
+#    sql/       data/sql/base + data/sql/updates（本机 setup_db.ps1 直接导入）
+#    modules/   模块源码树（含 data/sql，供模块更新器与手工导入）
+#
+#  关键路径依据（AC master）：
+#    conf/dist/config.sh             : BINPATH="$AC_PATH_ROOT/env/dist"
+#    apps/bash_shared/includes.sh    : AC_BINPATH_FULL="$BINPATH/bin"
+#    → 二进制在 env/dist/bin，配置在 env/dist/etc
+#
+#  注意：模块目录名必须原样（决定 mod_xxx_loader 链接符号），禁止改名。
+# =============================================================================
+name: windows-build
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # 仅用于发布 Release
+
+env:
+  AC_DIR: ac        # 上游 AzerothCore 检出到的子目录
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    name: windows-latest
+    env:
+      BOOST_ROOT: C:\local\boost_1_87_0
+      # 静态模块/脚本：全部编进 worldserver.exe，部署侧不再处理 .dll 加载路径
+      CSCRIPTS: static
+      CMODULES: static
+      CCOREPCH: OFF
+      CSCRIPTPCH: OFF
+      # mod-ale：AC 的 modules/CMakeLists.txt 对其有专门分支（MOD_ALE_FOUND），
+      # 静态编入时把 lualib 链进 modules 目标，并把 LuaEngine/extensions
+      # 安装到 bin/lua_scripts/。Lua 由 ALE 在 CMake configure 期用
+      # FetchContent 从 lua.org 下载（不是仓库自带源码），runner 有外网即可。
+      # 默认 LUA_VERSION=lua52。
+    steps:
+      # 1) 本仓库：提供 ci/modules.list
+      - name: Checkout build repo
+        uses: actions/checkout@v7
+        with:
+          path: buildrepo
+
+      # 2) 上游 AzerothCore master
+      - name: Checkout AzerothCore master
+        uses: actions/checkout@v7
+        with:
+          repository: azerothcore/azerothcore-wotlk
+          ref: master
+          path: ac
+
+      - name: Record AC commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="$(git -C ac rev-parse HEAD)"
+          SHORT="${SHA:0:7}"
+          echo "AC_SHA=$SHA"        >> "$GITHUB_ENV"
+          echo "AC_SHA_SHORT=$SHORT" >> "$GITHUB_ENV"
+          echo "### AzerothCore master @ $SHORT" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cache Boost & MySQL
+        uses: actions/cache@v6
+        with:
+          path: |
+            C:\local\boost_1_87_0
+            C:\tools\mysql\current
+          key: winbuild-deps:boost-1.87.0:mysql-8.4.9
+
+      - name: Configure OS (Boost / MySQL / OpenSSL)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # --- Boost 1.87.0 (msvc-14.3, 64-bit) -> C:\local\boost_1_87_0 (BOOST_ROOT) ---
+          if (-not (Test-Path 'C:\local\boost_1_87_0\boost'))
+          {
+              $boostExe = Join-Path $env:RUNNER_TEMP 'boost.exe'
+              $boostUrl = 'https://downloads.sourceforge.net/project/boost/boost-binaries/' +
+                  '1.87.0/boost_1_87_0-msvc-14.3-64.exe'
+              # SourceForge 按 UA 分派：浏览器 UA 会拿到 HTML 页面，故用非浏览器 UA
+              $boostRequest = @{
+                  Uri                      = $boostUrl
+                  OutFile                  = $boostExe
+                  UserAgent                = 'azerothcore-ci'
+                  ConnectionTimeoutSeconds = 60
+                  OperationTimeoutSeconds  = 60
+              }
+              $boostAttempts = 3
+              for ($attempt = 1; $attempt -le $boostAttempts; $attempt++)
+              {
+                  try
+                  {
+                      Invoke-WebRequest @boostRequest
+                      $boostMB = (Get-Item $boostExe).Length / 1MB
+                      if ($boostMB -lt 50) { throw "got $([int]$boostMB) MB, likely an HTML page." }
+                      break
+                  }
+                  catch
+                  {
+                      Write-Host "Boost download attempt $attempt failed: $($_.Exception.Message)"
+                      if ($attempt -eq $boostAttempts) { throw }
+                      Start-Sleep -Seconds 15
+                  }
+              }
+              Write-Host ("Downloaded Boost installer: {0:N1} MB" -f $boostMB)
+              $boostProc = Start-Process -FilePath $boostExe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR=C:\local\boost_1_87_0' -Wait -PassThru
+              if ($boostProc.ExitCode -ne 0) { throw "Boost installer failed with exit code $($boostProc.ExitCode)." }
+              if (-not (Test-Path 'C:\local\boost_1_87_0\boost\version.hpp')) { throw 'Boost install missing headers.' }
+              if (-not (Test-Path 'C:\local\boost_1_87_0\lib64-msvc-14.3')) { throw 'Boost install missing prebuilt libs.' }
+          }
+
+          # --- MySQL 8.4 client headers + libs -> C:\tools\mysql\current ---
+          if (-not (Test-Path 'C:\tools\mysql\current\lib\mysqlclient.lib'))
+          {
+              $mysqlZip = Join-Path $env:RUNNER_TEMP 'mysql.zip'
+              Invoke-WebRequest -Uri 'https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.9-winx64.zip' -OutFile $mysqlZip -UserAgent 'Mozilla/5.0'
+              $mysqlMB = (Get-Item $mysqlZip).Length / 1MB
+              Write-Host ("Downloaded MySQL zip: {0:N1} MB" -f $mysqlMB)
+              if ($mysqlMB -lt 50) { throw "MySQL zip download looks wrong ($([int]$mysqlMB) MB)." }
+              New-Item -ItemType Directory -Force -Path 'C:\tools\mysql' | Out-Null
+              Expand-Archive -Path $mysqlZip -DestinationPath 'C:\tools\mysql' -Force
+              if (Test-Path 'C:\tools\mysql\current') { Remove-Item -Recurse -Force 'C:\tools\mysql\current' }
+              Rename-Item 'C:\tools\mysql\mysql-8.4.9-winx64' 'C:\tools\mysql\current'
+              if (-not (Test-Path 'C:\tools\mysql\current\lib\mysqlclient.lib')) { throw 'MySQL client import library missing.' }
+          }
+
+          # --- OpenSSL: 使用 runner 镜像自带的安装 ---
+          $opensslRoot = @($env:OPENSSL_ROOT_DIR, 'C:\Program Files\OpenSSL', 'C:\Program Files\OpenSSL-Win64') |
+              Where-Object { $_ -and (Test-Path (Join-Path $_ 'include\openssl\opensslv.h')) } |
+              Select-Object -First 1
+          if (-not $opensslRoot) { throw 'No OpenSSL development install found on the runner image.' }
+          "OPENSSL_ROOT_DIR=$opensslRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Using OpenSSL at $opensslRoot"
+
+      - name: Clone enabled modules from ci/modules.list
+        shell: bash
+        working-directory: ac
+        run: |
+          set -euo pipefail
+          MODULES_LIST="../buildrepo/ci/modules.list"
+          if [ ! -f "$MODULES_LIST" ]; then
+            echo "::error::ci/modules.list not found (expected at $MODULES_LIST)."
+            exit 1
+          fi
+          mkdir -p modules
+          while IFS='|' read -r dir repo branch enabled; do
+            dir="$(echo "$dir" | xargs)"; repo="$(echo "$repo" | xargs)"
+            branch="$(echo "$branch" | xargs)"; enabled="$(echo "$enabled" | xargs)"
+            [ -z "$dir" ] && continue
+            case "$dir" in \#*) continue ;; esac
+            [ "$enabled" != "1" ] && { echo "SKIP (disabled): $dir"; continue; }
+            rm -rf "modules/$dir"
+            if [[ "$repo" == *:* ]]; then
+              mrepo="${repo%%:*}"; sub="${repo##*:}"
+              tmp="/tmp/mono_${RANDOM}"
+              echo "CLONE monorepo $mrepo @$branch -> extract $sub as $dir"
+              git clone --depth 1 --branch "$branch" "$mrepo" "$tmp"
+              if [ ! -d "$tmp/$sub" ]; then
+                echo "::error::subdir '$sub' not found in $mrepo"; exit 1
+              fi
+              cp -r "$tmp/$sub" "modules/$dir"
+              rm -rf "$tmp"
+            else
+              echo "CLONE $repo @$branch -> modules/$dir"
+              git clone --depth 1 --branch "$branch" "$repo" "modules/$dir"
+            fi
+            # 去掉 .git，避免打进产物
+            rm -rf "modules/$dir/.git"
+          done < "$MODULES_LIST"
+          echo "---- modules/ ----"
+          ls -1 modules
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CTOOLS_BUILD=all
+          cd ac
+          ./acore.sh compiler build
+
+      - name: Package artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ac    = Join-Path $env:GITHUB_WORKSPACE 'ac'
+          $stage = Join-Path $env:GITHUB_WORKSPACE 'artifacts/AzerothCore-Win64'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          # 1) 二进制：AC 安装到 env/dist/bin
+          $srcBin = Join-Path $ac 'env/dist/bin'
+          if (-not (Test-Path (Join-Path $srcBin 'worldserver.exe'))) {
+              $hit = Get-ChildItem $ac -Recurse -Filter 'worldserver.exe' -ErrorAction SilentlyContinue |
+                  Where-Object { $_.FullName -notmatch '\\artifacts\\' } | Select-Object -First 1
+              if (-not $hit) { throw "worldserver.exe not found under $ac. Build output layout changed?" }
+              $srcBin = $hit.DirectoryName
+              Write-Host "::warning::fallback bin dir: $srcBin"
+          }
+          Write-Host "bin source: $srcBin"
+          Copy-Item (Join-Path $srcBin '*') (Join-Path $stage 'bin') -Recurse -Force
+          if (-not (Test-Path (Join-Path $stage 'bin/worldserver.exe'))) { throw 'worldserver.exe missing after copy' }
+          if (-not (Test-Path (Join-Path $stage 'bin/authserver.exe')))  { throw 'authserver.exe missing after copy' }
+
+          # 2) 运行期依赖：AC 链接 mysqlclient.lib，运行需 libmysql.dll
+          $lm = Get-ChildItem 'C:\tools\mysql\current' -Recurse -Filter 'libmysql.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($lm) { Copy-Item $lm.FullName (Join-Path $stage 'bin') -Force; Write-Host 'packaged libmysql.dll' }
+          else { Write-Host '::warning::libmysql.dll not found under C:\tools\mysql\current' }
+
+          # 3) 配置模板：env/dist/etc（含主配置 + modules/*.conf.dist）
+          $srcEtc = Join-Path $ac 'env/dist/etc'
+          if (Test-Path $srcEtc) {
+              Copy-Item (Join-Path $srcEtc '*') (Join-Path $stage 'etc') -Recurse -Force
+              Write-Host ("packaged etc/ ({0} files)" -f (Get-ChildItem (Join-Path $stage 'etc') -Recurse -File).Count)
+          } else {
+              Write-Host '::warning::env/dist/etc missing - deploy.ps1 需要它生成配置'
+          }
+
+          # 4) 数据库初始数据：base + updates（本机 setup_db.ps1 直接导入）
+          $sqlBase = Join-Path $ac 'data/sql/base'
+          $sqlUpd  = Join-Path $ac 'data/sql/updates'
+          if (Test-Path $sqlBase) { Copy-Item $sqlBase (Join-Path $stage 'sql/base') -Recurse -Force;    Write-Host 'packaged sql/base' }
+          if (Test-Path $sqlUpd)  { Copy-Item $sqlUpd  (Join-Path $stage 'sql/updates') -Recurse -Force; Write-Host 'packaged sql/updates' }
+
+          # 5) 模块源码树：保留 data/sql（模块更新器）与 conf（模块配置）
+          $mods = Join-Path $ac 'modules'
+          if (Test-Path $mods) {
+              Copy-Item $mods (Join-Path $stage 'modules') -Recurse -Force
+              Write-Host ("packaged modules/ ({0} files)" -f (Get-ChildItem (Join-Path $stage 'modules') -Recurse -File).Count)
+          } else { Write-Host '::warning::no modules/ produced' }
+
+          Get-ChildItem $stage | ForEach-Object { Write-Host ("  stage: {0}" -f $_.Name) }
+
+      - name: Zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:GITHUB_WORKSPACE 'artifacts/AzerothCore-Win64'
+          $short = $env:AC_SHA_SHORT
+          $zip   = Join-Path $env:GITHUB_WORKSPACE "artifacts/AzerothCore-Win64-$short.zip"
+          $sz = @('7z','7zz',"$env:ProgramFiles\7-Zip\7z.exe") |
+              Where-Object { $_ -and (Get-Command $_ -ErrorAction SilentlyContinue -CommandType Application) } |
+              Select-Object -First 1
+          if ($sz) {
+              Write-Host "using archiver: $sz"
+              Push-Location $stage
+              & $sz a -tzip $zip * -r -bso0 -bsp0
+              $rc = $LASTEXITCODE
+              Pop-Location
+              if ($rc -ne 0) { throw "7z failed with $rc" }
+          } else {
+              Write-Host '7z not found, falling back to Compress-Archive'
+              Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
+          }
+          if (-not (Test-Path $zip)) { throw "zip not produced: $zip" }
+          "ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host ("zip: {0} ({1:N1} MB)" -f $zip, ((Get-Item $zip).Length/1MB))
+
+      - name: Publish Release (prerelease)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="build-$AC_SHA_SHORT"
+          ZIP="$ZIP_PATH"
+          echo "publishing $ZIP as $TAG"
+          # 同 sha 重跑时清理旧 release/tag，避免 gh release create 撞名失败
+          gh release delete "$TAG" --yes --cleanup-tag >/dev/null 2>&1 || true
+          git push --delete origin "$TAG" >/dev/null 2>&1 || true
+          gh release create "$TAG" "$ZIP" \
+            --prerelease \
+            --title "AzerothCore build $AC_SHA_SHORT" \
+            --notes "AzerothCore master $AC_SHA. Modules per ci/modules.list (static). Download the zip and run deploy.ps1 on Windows."
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "### 产物已发布" >> "$GITHUB_STEP_SUMMARY"
+          echo "tag \`$TAG\` — asset \`$(basename "$ZIP")\`" >> "$GITHUB_STEP_SUMMARY"
