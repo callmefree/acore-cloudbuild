@@ -175,16 +175,23 @@ jobs:
             [ -z "$dir" ] && continue
             case "$dir" in \#*) continue ;; esac
             [ "$enabled" != "1" ] && { echo "SKIP (disabled): $dir"; continue; }
+            # 解析自检：仓库必须是 http(s):// 或 git@ 开头，错了立刻炸而不是拿到半个 URL
+            case "$repo" in
+              http://*|https://*|git@*) ;;
+              *) echo "::error::bad repo spec for $dir: '$repo'"; exit 1 ;;
+            esac
             rm -rf "modules/$dir"
-            if [[ "$repo" == *:* ]]; then
-              mrepo="${repo%%:*}"; sub="${repo##*:}"
-              tmp="/tmp/mono_${RANDOM}"
-              echo "CLONE monorepo $mrepo @$branch -> extract $sub as $dir"
-              git clone --depth 1 --branch "$branch" "$mrepo" "$tmp"
-              if [ ! -d "$tmp/$sub" ]; then
+            # 只有 "<url>.git:<子目录>" 才算多模块大仓。
+            # 不能简单用 ==*:* 判断——普通 https://... 里也有冒号，会把 "https" 当成仓库名。
+            if [[ "$repo" =~ ^(https?://[^:]+\.git):(.+)$ ]]; then
+              mrepo="${BASH_REMATCH[1]}"; sub="${BASH_REMATCH[2]}"
+              tmp="$(mktemp -d)"
+              echo "CLONE monorepo $mrepo @$branch -> extract '$sub' as $dir"
+              git clone --depth 1 --branch "$branch" "$mrepo" "$tmp/repo"
+              if [ ! -d "$tmp/repo/$sub" ]; then
                 echo "::error::subdir '$sub' not found in $mrepo"; exit 1
               fi
-              cp -r "$tmp/$sub" "modules/$dir"
+              cp -r "$tmp/repo/$sub" "modules/$dir"
               rm -rf "$tmp"
             else
               echo "CLONE $repo @$branch -> modules/$dir"
