@@ -39,7 +39,12 @@ mod-gauntlet|https://github.com/ngc7052/mod-gauntlet.git|master|0
 # --- [B] 需客户端补丁 / 与 [A] 存在语义取舍 ------------------------------------
 mod-classless-wildcard|https://github.com/DustinHendrickson/mod-classless-wildcard.git|main|1
 mod-individual-progression|https://github.com/ZhengPeiRu21/mod-individual-progression.git|master|1
-mod-attriboost|https://github.com/Adrestie/WoW-mods.git:mod-attriboost|main|1
+# 注意目录名必须是 Attriboost（不是 mod-attriboost）：
+#   AC 的静态加载器按"目录名(-→_)"生成符号 Add<目录名>Scripts()，
+#   而该模块 src/MP_loader.cpp 定义的是 AddAttriboostScripts()。
+#   目录叫 mod-attriboost 会生成 Addmod_attriboostScripts → LNK2019 链接失败（已实测）。
+#   改名为 Attriboost 后符号正好对上，conf 路径也仍输出到 configs/modules/attriboost.conf。
+Attriboost|https://github.com/Adrestie/WoW-mods.git:mod-attriboost|main|1
 mod-item-upgrade|https://github.com/Adrestie/WoW-mods.git:mod-item-upgrade|main|1
 #
 # --- [C] 首轮不编 ------------------------------------------------------------
