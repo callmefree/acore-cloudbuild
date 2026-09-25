@@ -52,8 +52,15 @@ jobs:
       # 静态模块/脚本：全部编进 worldserver.exe，部署侧不再处理 .dll 加载路径
       CSCRIPTS: static
       CMODULES: static
-      CCOREPCH: OFF
-      CSCRIPTPCH: OFF
+      # PCH 必须保持 ON（AC conf/dist/config.sh 默认就是 ON）。
+      # 实测关掉后 MSVC 直接编译失败：src/common 里一批头文件依赖 core PCH 提供
+      # <string>、M_PI、ASSERT —— 表现为
+      #   OpenSSLCrypto.cpp: 'ASSERT': identifier not found
+      #   Geometry.h: 'M_PI': undeclared identifier
+      #   Tokenize.h: 'std::string' is not a member of 'std'
+      # 不要为了"加速"关它。
+      CCOREPCH: ON
+      CSCRIPTPCH: ON
       # mod-ale：AC 的 modules/CMakeLists.txt 对其有专门分支（MOD_ALE_FOUND），
       # 静态编入时把 lualib 链进 modules 目标，并把 LuaEngine/extensions
       # 安装到 bin/lua_scripts/。Lua 由 ALE 在 CMake configure 期用
