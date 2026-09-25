@@ -315,19 +315,37 @@ jobs:
           "ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host ("zip: {0} ({1:N1} MB)" -f $zip, ((Get-Item $zip).Length/1MB))
 
+      # 兜底：即使下面的 Release 发布失败，zip 也能从 Actions 产物页直接下载。
+      # （本工作区根目录不是 git 仓库——本仓库被 checkout 到 buildrepo/，
+      #   AC 被 checkout 到 ac/——所以 gh 无法自动推断仓库，必须显式 --repo。）
+      - name: Upload zip as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AzerothCore-Win64-${{ env.AC_SHA_SHORT }}
+          path: ${{ env.ZIP_PATH }}
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Publish Release (prerelease)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           TAG="build-$AC_SHA_SHORT"
           ZIP="$ZIP_PATH"
-          echo "publishing $ZIP as $TAG"
-          # 同 sha 重跑时清理旧 release/tag，避免 gh release create 撞名失败
-          gh release delete "$TAG" --yes --cleanup-tag >/dev/null 2>&1 || true
-          git push --delete origin "$TAG" >/dev/null 2>&1 || true
+          echo "publishing $ZIP as $TAG to $GH_REPO"
+          # gh 在非 git 目录下无法推断仓库，所有命令都要带 --repo / 走 REST。
+          # 同 sha 重跑时清理旧 release/tag，避免 gh release create 撞名失败。
+          REL_ID="$(gh api "repos/$GH_REPO/releases/tags/$TAG" --jq .id 2>/dev/null || true)"
+          if [ -n "${REL_ID:-}" ]; then
+            echo "deleting existing release $TAG (id=$REL_ID)"
+            gh api -X DELETE "repos/$GH_REPO/releases/$REL_ID" >/dev/null 2>&1 || true
+          fi
+          gh api -X DELETE "repos/$GH_REPO/git/refs/tags/$TAG" >/dev/null 2>&1 || true
           gh release create "$TAG" "$ZIP" \
+            --repo "$GH_REPO" \
             --prerelease \
             --title "AzerothCore build $AC_SHA_SHORT" \
             --notes "AzerothCore master $AC_SHA. Modules per ci/modules.list (static). Download the zip and run deploy.ps1 on Windows."
