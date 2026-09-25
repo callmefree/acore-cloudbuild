@@ -1,0 +1,44 @@
+# modules.list — 云编译模块清单（workflow 消费）
+#
+# 格式（每行一个模块，字段用 | 分隔，最后一段是启用开关 1/0）：
+#   <模块目录名>|<仓库>|<分支>|<启用>
+#
+# 约束：
+#   1) 目录名必须与"脚本加载器符号"一致 → 直接决定 mod_xxx_loader 的符号名。
+#      AzerothCore 从目录名推导 loader 符号，改名 = 链接失败。
+#   2) 从多模块大仓（Adrestie/WoW-mods）取子目录时，用 "仓库:子目录" 语法。
+#   3) 空行与 # 开头的行被忽略。
+#
+# 分档：
+#   [A] 零客户端改动，编译即可冒烟（默认全开）
+#   [B] 需客户端补丁 / DBC 补丁，服务端可编（默认编入，配置层分级启用）
+#   [C] 暂缓：WIP 或依赖 AIO，首轮不编（改 1 即可编入，需重新触发云编译）
+#
+# --- [A] 服务端即插即用 -------------------------------------------------------
+mod-zone-scaling|https://github.com/firstoni-dev/mod-zone-scaling.git|main|1
+mod-item-level-scaling|https://github.com/Ildourol/mod-item-level-scaling.git|master|1
+mod-solocraft|https://github.com/azerothcore/mod-solocraft.git|master|1
+mod-solo-raids|https://github.com/TheTollski/mod-solo-raids.git|master|1
+mod-instanced-worldbosses|https://github.com/azerothcore/mod-instanced-worldbosses.git|master|1
+mod-city-siege|https://github.com/DustinHendrickson/mod-city-siege.git|main|1
+mod-gauntlet|https://github.com/ngc7052/mod-gauntlet.git|master|1
+mod-ale|https://github.com/azerothcore/mod-ale.git|master|1
+# mod-ale = AzerothCore Lua Engine (ALE)。AC 的 modules/CMakeLists.txt 对其有专门分支(MOD_ALE_FOUND)：
+#   静态编入时把 lualib 链进 modules 目标，并把 LuaEngine/extensions 装到 bin/lua_scripts/。
+#   Lua 不是仓库自带源码——ALE 在 CMake configure 期用 FetchContent 从 lua.org 下载，runner 需外网。
+#   默认 LUA_VERSION=lua52（可选 luajit）。sql/ 目录为空(.gitkeep)，无需导入。
+#
+# --- [B] 需客户端补丁 / 与 [A] 存在语义取舍 ------------------------------------
+mod-classless-wildcard|https://github.com/DustinHendrickson/mod-classless-wildcard.git|main|1
+mod-individual-progression|https://github.com/ZhengPeiRu21/mod-individual-progression.git|master|1
+mod-attriboost|https://github.com/Adrestie/WoW-mods.git:mod-attriboost|main|1
+mod-item-upgrade|https://github.com/Adrestie/WoW-mods.git:mod-item-upgrade|main|1
+#
+# --- [C] 首轮不编 ------------------------------------------------------------
+mod-spheregrid|https://github.com/Adrestie/WoW-mods.git:mod-spheregrid|main|0
+mod-stellar-tarot|https://github.com/Adrestie/WoW-mods.git:mod-stellar-tarot|main|0
+#
+# --- 非编译项（记录用途，workflow 会忽略，因为没有生效的模块目录语义） ---------
+# WotLKItemGenerator  STRHercules/WotLKItemGenerator   Tauri 桌面工具，离线产出 SQL/DBC，不参与编译
+# mod-forever-ui      Adrestie/WoW-mods:mod-forever-ui 纯客户端插件，不参与编译
+# mod-limit-break     Adrestie/WoW-mods:mod-limit-break 仅规格文档、无代码，不参与编译
