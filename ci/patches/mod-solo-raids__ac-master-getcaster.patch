@@ -1,0 +1,322 @@
+diff --git a/src/dungeons/black_morass/temporus.cpp b/src/dungeons/black_morass/temporus.cpp
+index 88349c4..8ab1902 100644
+--- a/src/dungeons/black_morass/temporus.cpp
++++ b/src/dungeons/black_morass/temporus.cpp
+@@ -70,7 +70,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK || spell->GetSpellInfo()->Id != SPELL_HASTEN || !SoloRaids::Config::DisableTemporusHasten())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_TEMPORUS && SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_BLACK_MORASS))
+             result = SPELL_FAILED_DONT_REPORT;
+     }
+diff --git a/src/raids/black_temple/gurtogg_bloodboil.cpp b/src/raids/black_temple/gurtogg_bloodboil.cpp
+index 2b8912d..e7cc02d 100644
+--- a/src/raids/black_temple/gurtogg_bloodboil.cpp
++++ b/src/raids/black_temple/gurtogg_bloodboil.cpp
+@@ -90,7 +90,7 @@ public:
+             !SoloRaids::Config::DisableGurtoggBewilderingStrike())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_GURTOGG_BLOODBOIL &&
+             SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_BLACK_TEMPLE))
+             result = SPELL_FAILED_DONT_REPORT;
+diff --git a/src/raids/black_temple/illidan_stormrage.cpp b/src/raids/black_temple/illidan_stormrage.cpp
+index 9eebf9e..f34d694 100644
+--- a/src/raids/black_temple/illidan_stormrage.cpp
++++ b/src/raids/black_temple/illidan_stormrage.cpp
+@@ -120,7 +120,7 @@ public:
+             !SoloRaids::Config::DisableIllidanSummonShadowDemon())
+             return true;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_ILLIDAN_STORMRAGE && IsSoloBlackTemple(caster))
+             return false;
+ 
+@@ -133,7 +133,7 @@ public:
+             !SoloRaids::Config::DisableIllidanSummonShadowDemon())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_ILLIDAN_STORMRAGE && IsSoloBlackTemple(caster))
+             result = SPELL_FAILED_DONT_REPORT;
+     }
+diff --git a/src/raids/black_temple/reliquary_of_souls.cpp b/src/raids/black_temple/reliquary_of_souls.cpp
+index bfd9deb..ef6b91d 100644
+--- a/src/raids/black_temple/reliquary_of_souls.cpp
++++ b/src/raids/black_temple/reliquary_of_souls.cpp
+@@ -90,7 +90,7 @@ public:
+             !SoloRaids::Config::DisableEssenceOfDesireSpiritShock())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_ESSENCE_OF_DESIRE &&
+             SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_BLACK_TEMPLE))
+             result = SPELL_FAILED_DONT_REPORT;
+diff --git a/src/raids/blackwing_lair/chromaggus.cpp b/src/raids/blackwing_lair/chromaggus.cpp
+index 27a8302..b6a73bd 100644
+--- a/src/raids/blackwing_lair/chromaggus.cpp
++++ b/src/raids/blackwing_lair/chromaggus.cpp
+@@ -73,7 +73,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK || spell->GetSpellInfo()->Id != SPELL_TIME_LAPSE || !SoloRaids::Config::DisableChromaggusTimeLapse())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_CHROMAGGUS && SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_BLACKWING_LAIR))
+             result = SPELL_FAILED_DONT_REPORT;
+     }
+diff --git a/src/raids/blackwing_lair/razorgore_the_untamed.cpp b/src/raids/blackwing_lair/razorgore_the_untamed.cpp
+index 70e14e7..881451e 100644
+--- a/src/raids/blackwing_lair/razorgore_the_untamed.cpp
++++ b/src/raids/blackwing_lair/razorgore_the_untamed.cpp
+@@ -181,7 +181,7 @@ public:
+ 
+     bool CanPrepare(Spell* spell, SpellCastTargets const* /*targets*/, AuraEffect const* /*triggeredByAura*/) override
+     {
+-        if (!spell || spell->GetSpellInfo()->Id != SPELL_DESTROY_EGG || !IsSoloControlledRazorgore(spell->GetCaster()))
++        if (!spell || spell->GetSpellInfo()->Id != SPELL_DESTROY_EGG || !IsSoloControlledRazorgore(spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr))
+             return true;
+ 
+         Creature* razorgore = spell->GetCaster()->ToCreature();
+diff --git a/src/raids/blackwing_lair/vaelastrasz_the_corrupt.cpp b/src/raids/blackwing_lair/vaelastrasz_the_corrupt.cpp
+index 519a415..5cc7a6d 100644
+--- a/src/raids/blackwing_lair/vaelastrasz_the_corrupt.cpp
++++ b/src/raids/blackwing_lair/vaelastrasz_the_corrupt.cpp
+@@ -73,7 +73,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK || spell->GetSpellInfo()->Id != SPELL_BURNING_ADRENALINE || !SoloRaids::Config::DisableVaelastraszBurningAdrenaline())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_VAELASTRAZ && SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_BLACKWING_LAIR))
+             result = SPELL_FAILED_DONT_REPORT;
+     }
+diff --git a/src/raids/gruuls_lair/high_king_maulgar.cpp b/src/raids/gruuls_lair/high_king_maulgar.cpp
+index 7462519..8438e3d 100644
+--- a/src/raids/gruuls_lair/high_king_maulgar.cpp
++++ b/src/raids/gruuls_lair/high_king_maulgar.cpp
+@@ -138,7 +138,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK || spell->GetSpellInfo()->Id != SPELL_SUMMON_WILD_FELHUNTER)
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (!caster || caster->GetEntry() != NPC_OLM_THE_SUMMONER ||
+             !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_GRUULS_LAIR))
+             return;
+diff --git a/src/raids/magtheridons_lair/magtheridon.cpp b/src/raids/magtheridons_lair/magtheridon.cpp
+index c91d451..cc12e15 100644
+--- a/src/raids/magtheridons_lair/magtheridon.cpp
++++ b/src/raids/magtheridons_lair/magtheridon.cpp
+@@ -106,7 +106,7 @@ public:
+             !SoloRaids::Config::DisableMagtheridonBurningAbyssal())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_HELLFIRE_CHANNELER &&
+             SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_MAGTHERIDONS_LAIR))
+             result = SPELL_FAILED_DONT_REPORT;
+diff --git a/src/raids/mount_hyjal/mount_hyjal_trash.cpp b/src/raids/mount_hyjal/mount_hyjal_trash.cpp
+index 9e4b000..04808a6 100644
+--- a/src/raids/mount_hyjal/mount_hyjal_trash.cpp
++++ b/src/raids/mount_hyjal/mount_hyjal_trash.cpp
+@@ -153,7 +153,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK)
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (!caster || !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_MOUNT_HYJAL))
+             return;
+ 
+diff --git a/src/raids/naxxramas/razuvious.cpp b/src/raids/naxxramas/razuvious.cpp
+index 1245f51..568e16a 100644
+--- a/src/raids/naxxramas/razuvious.cpp
++++ b/src/raids/naxxramas/razuvious.cpp
+@@ -102,7 +102,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK || spell->GetSpellInfo()->Id != SPELL_MANA_BURN || !SoloRaids::Config::DisableRazuviousManaBurn())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (IsRazuvious(caster) && SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_NAXXRAMAS))
+             result = SPELL_FAILED_DONT_REPORT;
+     }
+diff --git a/src/raids/naxxramas/thaddius.cpp b/src/raids/naxxramas/thaddius.cpp
+index 86b024a..dad917e 100644
+--- a/src/raids/naxxramas/thaddius.cpp
++++ b/src/raids/naxxramas/thaddius.cpp
+@@ -176,7 +176,7 @@ public:
+             !SoloRaids::Config::DisableThaddiusTeslaShock())
+             return true;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         return !caster || !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_NAXXRAMAS);
+     }
+ };
+diff --git a/src/raids/serpentshrine_cavern/fathom_lord_karathress.cpp b/src/raids/serpentshrine_cavern/fathom_lord_karathress.cpp
+index 857702b..a378436 100644
+--- a/src/raids/serpentshrine_cavern/fathom_lord_karathress.cpp
++++ b/src/raids/serpentshrine_cavern/fathom_lord_karathress.cpp
+@@ -83,7 +83,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK)
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (!caster || !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_SERPENTSHRINE_CAVERN))
+             return;
+ 
+diff --git a/src/raids/serpentshrine_cavern/lady_vashj.cpp b/src/raids/serpentshrine_cavern/lady_vashj.cpp
+index 14880d8..d9ca8dc 100644
+--- a/src/raids/serpentshrine_cavern/lady_vashj.cpp
++++ b/src/raids/serpentshrine_cavern/lady_vashj.cpp
+@@ -167,7 +167,7 @@ public:
+         if (!spell || spell->GetSpellInfo()->Id != SPELL_SUMMON_TOXIC_SPOREBAT)
+             return true;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (!caster || caster->GetEntry() != NPC_LADY_VASHJ ||
+             !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_SERPENTSHRINE_CAVERN))
+             return true;
+@@ -189,7 +189,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK || spell->GetSpellInfo()->Id != SPELL_POISON_BOLT)
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         Unit* target = spell->m_targets.GetUnitTarget();
+         if (!caster || !target || caster->GetEntry() != NPC_TAINTED_ELEMENTAL ||
+             !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_SERPENTSHRINE_CAVERN))
+diff --git a/src/raids/sunwell_plateau/muru.cpp b/src/raids/sunwell_plateau/muru.cpp
+index 12bef65..95b3604 100644
+--- a/src/raids/sunwell_plateau/muru.cpp
++++ b/src/raids/sunwell_plateau/muru.cpp
+@@ -172,7 +172,7 @@ public:
+             !SoloRaids::Config::PreventMuruDarkFiendSpawns())
+             return true;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         return !caster || !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_SUNWELL_PLATEAU);
+     }
+ };
+diff --git a/src/raids/sunwell_plateau/trash.cpp b/src/raids/sunwell_plateau/trash.cpp
+index 7905fea..4fc2a91 100644
+--- a/src/raids/sunwell_plateau/trash.cpp
++++ b/src/raids/sunwell_plateau/trash.cpp
+@@ -61,7 +61,7 @@ public:
+             !SoloRaids::Config::DisableSunbladeCabalistIgniteMana())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_SUNBLADE_CABALIST &&
+             SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_SUNWELL_PLATEAU))
+             result = SPELL_FAILED_DONT_REPORT;
+diff --git a/src/raids/tempest_keep/kaelthas_sunstrider.cpp b/src/raids/tempest_keep/kaelthas_sunstrider.cpp
+index 3e32451..bc90d22 100644
+--- a/src/raids/tempest_keep/kaelthas_sunstrider.cpp
++++ b/src/raids/tempest_keep/kaelthas_sunstrider.cpp
+@@ -90,7 +90,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK)
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (!caster || !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_TEMPEST_KEEP))
+             return;
+ 
+diff --git a/src/raids/temple_of_ahnqiraj/twin_emperors.cpp b/src/raids/temple_of_ahnqiraj/twin_emperors.cpp
+index 8cd0d5e..08de4f2 100644
+--- a/src/raids/temple_of_ahnqiraj/twin_emperors.cpp
++++ b/src/raids/temple_of_ahnqiraj/twin_emperors.cpp
+@@ -83,7 +83,7 @@ public:
+         if (!spell || result != SPELL_CAST_OK || spell->GetSpellInfo()->Id != SPELL_HEAL_BROTHER || !SoloRaids::Config::DisableTwinEmperorsHealBrother())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (IsTwinEmperor(caster) && SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_TEMPLE_OF_AHNQIRAJ))
+             result = SPELL_FAILED_DONT_REPORT;
+     }
+diff --git a/src/raids/trial_of_the_crusader/faction_champions.cpp b/src/raids/trial_of_the_crusader/faction_champions.cpp
+index 6e02af1..6f6bb61 100644
+--- a/src/raids/trial_of_the_crusader/faction_champions.cpp
++++ b/src/raids/trial_of_the_crusader/faction_champions.cpp
+@@ -173,7 +173,7 @@ bool ShouldBlockSpell(Spell* spell)
+     if (!spell)
+         return false;
+ 
+-    Unit* caster = spell->GetCaster();
++    Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+     if (!IsFactionChampion(caster) ||
+         !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_TRIAL_OF_THE_CRUSADER))
+         return false;
+diff --git a/src/raids/trial_of_the_crusader/lord_jaraxxus.cpp b/src/raids/trial_of_the_crusader/lord_jaraxxus.cpp
+index 77f3c5f..d963b1a 100644
+--- a/src/raids/trial_of_the_crusader/lord_jaraxxus.cpp
++++ b/src/raids/trial_of_the_crusader/lord_jaraxxus.cpp
+@@ -50,7 +50,7 @@ bool ShouldBlockSpell(Spell* spell)
+     if (!spell)
+         return false;
+ 
+-    Unit* caster = spell->GetCaster();
++    Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+     if (!caster || caster->GetEntry() != NPC_LORD_JARAXXUS ||
+         !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_TRIAL_OF_THE_CRUSADER))
+         return false;
+diff --git a/src/raids/ulduar/kologarn.cpp b/src/raids/ulduar/kologarn.cpp
+index 3725882..8c758f6 100644
+--- a/src/raids/ulduar/kologarn.cpp
++++ b/src/raids/ulduar/kologarn.cpp
+@@ -86,7 +86,7 @@ public:
+             !SoloRaids::Config::DisableKologarnStoneGrip())
+             return true;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_KOLOGARN &&
+             SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_ULDUAR))
+             return false;
+@@ -100,7 +100,7 @@ public:
+             !SoloRaids::Config::DisableKologarnStoneGrip())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_KOLOGARN &&
+             SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_ULDUAR))
+             result = SPELL_FAILED_DONT_REPORT;
+diff --git a/src/raids/ulduar/thorim.cpp b/src/raids/ulduar/thorim.cpp
+index 95efe30..04ce8d3 100644
+--- a/src/raids/ulduar/thorim.cpp
++++ b/src/raids/ulduar/thorim.cpp
+@@ -160,7 +160,7 @@ public:
+             !SoloRaids::Config::PreventThorimLightningOrbWipe())
+             return true;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         return !caster || caster->GetEntry() != NPC_LIGHTNING_ORB ||
+             !SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_ULDUAR);
+     }
+@@ -171,7 +171,7 @@ public:
+             !SoloRaids::Config::PreventThorimLightningOrbWipe())
+             return;
+ 
+-        Unit* caster = spell->GetCaster();
++        Unit* caster = spell->GetCaster() ? spell->GetCaster()->ToUnit() : nullptr;
+         if (caster && caster->GetEntry() == NPC_LIGHTNING_ORB &&
+             SoloRaids::IsSoloMap(caster->GetMap(), SOLO_RAIDS_MAP_ULDUAR))
+             result = SPELL_FAILED_DONT_REPORT;
