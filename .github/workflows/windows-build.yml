@@ -290,34 +290,57 @@ jobs:
           #
           # 所以：先读 CMakeCache.txt 回溯编译期实际使用的 MySQL，再取它的 libmysql.dll。
           $cacheTxt = ''
-          $cacheFile = Get-ChildItem $ac -Recurse -Filter 'CMakeCache.txt' -File -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -notmatch '\\artifacts\\' } | Select-Object -First 1
+          $cacheFile = Get-ChildItem $ac -Recurse -Filter 'CMakeCache.txt' -ErrorAction SilentlyContinue |
+              Where-Object { -not $_.PSIsContainer -and $_.FullName -notmatch '\\artifacts\\' } | Select-Object -First 1
           if ($cacheFile) { $cacheTxt = Get-Content $cacheFile.FullName -Raw; Write-Host "CMakeCache: $($cacheFile.FullName)" }
 
-          $libPath = $null; $incDir = $null
+          # CMakeCache.txt 的行格式是 VARNAME:TYPE=VALUE，取值时必须把 ":TYPE=" 整段剥掉。
+          # 踩坑记录：早先的正则只吃掉了 ":" 而留下 "TYPE="，于是拿到 "PATH=C:/Program Files/..."
+          # 这种畸形路径；随后 Get-ChildItem 因 PSDrive "PATH=C" 不存在而走不到 FileSystem 提供程序，
+          # 动态参数 -File 直接消失，报 "A parameter cannot be found that matches parameter name 'File'"。
+          # 因此这里改为：整行解析成哈希表 + 一律 -LiteralPath + 用 PSIsContainer 过滤目录。
+          $cc = @{}
           if ($cacheTxt) {
-              $m1 = [regex]::Match($cacheTxt, '(?im)^\s*[A-Za-z0-9_.]*MYSQL[A-Za-z0-9_.]*\s*[:=][^\r\n]*?(?<p>[A-Za-z]:[\\/][^\r\n;"]*mysqlclient\.lib)')
-              if ($m1.Success) { $libPath = $m1.Groups['p'].Value }
-              $m2 = [regex]::Match($cacheTxt, '(?im)^\s*[A-Za-z0-9_.]*MYSQL[A-Za-z0-9_.]*INCLUDE[A-Za-z0-9_.]*\s*[:=]\s*(?<p>[^\r\n]+)')
-              if ($m2.Success) { $incDir = ($m2.Groups['p'].Value -split ';')[0].Trim().Trim('"') }
+              foreach ($line in ($cacheTxt -split "`r?`n")) {
+                  if ($line -match '^\s*([^#=\s][^=]*?)=(.*)$') { $cc[$matches[1].Trim()] = $matches[2].Trim() }
+              }
           }
+          $libCands = @(); $incCands = @()
+          foreach ($k in $cc.Keys) {
+              $v = ($cc[$k] -split ';')[0].Trim().Trim('"')
+              if (-not $v) { continue }
+              if ($k -match 'MYSQL' -and $k -match 'LIB'     -and $v -match 'mysqlclient\.lib') { $libCands += $v }
+              if ($k -match 'MYSQL' -and $k -match 'INCLUDE' -and $v -match '[\\/]include')      { $incCands += $v }
+          }
+          # 多候选时优先选磁盘上真实存在的那个
+          $libPath = @($libCands | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)[0]
+          $incDir  = @($incCands | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)[0]
+          if (-not $libPath) { $libPath = $libCands[0] }
+          if (-not $incDir)  { $incDir  = $incCands[0] }
           Write-Host "compile-time MySQL lib  : $libPath"
           Write-Host "compile-time MySQL inc  : $incDir"
+
+          # 在候选根目录下找 libmysql.dll：优先 <root>\lib\libmysql.dll，其次递归。
+          function Find-LibMysql([string]$root) {
+              if (-not $root -or -not (Test-Path -LiteralPath $root)) { return $null }
+              $direct = Join-Path $root 'lib\libmysql.dll'
+              if (Test-Path -LiteralPath $direct) { return (Get-Item -LiteralPath $direct) }
+              return (Get-ChildItem -LiteralPath $root -Recurse -Filter 'libmysql.dll' -ErrorAction SilentlyContinue |
+                      Where-Object { -not $_.PSIsContainer } | Select-Object -First 1)
+          }
 
           $libmysql = $null
           if ($libPath) {
               # .../<mysqlRoot>/lib/mysqlclient.lib -> <mysqlRoot>
-              $mysqlRoot = Split-Path (Split-Path $libPath -Parent) -Parent
-              $libmysql = Get-ChildItem $mysqlRoot -Recurse -Filter 'libmysql.dll' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+              $libmysql = Find-LibMysql (Split-Path (Split-Path $libPath -Parent) -Parent)
           }
           if (-not $libmysql -and $incDir) {
               # 头文件目录 .../<mysqlRoot>/include -> <mysqlRoot>
-              $mysqlRoot = Split-Path $incDir -Parent
-              $libmysql = Get-ChildItem $mysqlRoot -Recurse -Filter 'libmysql.dll' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+              $libmysql = Find-LibMysql (Split-Path $incDir -Parent)
           }
           if (-not $libmysql) {
               Write-Host '::warning::could not locate compile-time libmysql.dll from CMakeCache; falling back to C:\tools\mysql\current'
-              $libmysql = Get-ChildItem 'C:\tools\mysql\current' -Recurse -Filter 'libmysql.dll' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+              $libmysql = Find-LibMysql 'C:\tools\mysql\current'
           }
           if (-not $libmysql) { throw 'libmysql.dll not found - 产物将无法启动（ACE00046 或缺 DLL）' }
           Copy-Item -LiteralPath $libmysql.FullName -Destination $dstBin -Force
@@ -328,7 +351,10 @@ jobs:
           # 避免又产出一个"看着绿、装上去秒退"的包。
           $verId = $null
           $hdr = $null
-          if ($incDir) { $hdr = Get-ChildItem $incDir -Recurse -Filter 'mysql_version.h' -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          if ($incDir -and (Test-Path -LiteralPath $incDir)) {
+              $hdr = Get-ChildItem -LiteralPath $incDir -Recurse -Filter 'mysql_version.h' -ErrorAction SilentlyContinue |
+                  Where-Object { -not $_.PSIsContainer } | Select-Object -First 1
+          }
           if ($hdr) {
               $hm = [regex]::Match((Get-Content $hdr.FullName -Raw), '(?m)^\s*#define\s+MYSQL_VERSION_ID\s+(\d+)')
               if ($hm.Success) { $verId = [int]$hm.Groups[1].Value }
@@ -354,8 +380,9 @@ jobs:
           $osslRoot = $env:OPENSSL_ROOT_DIR
           foreach ($dn in @('libssl-3-x64.dll','libcrypto-3-x64.dll','legacy.dll')) {
               $src = $null
-              if ($osslRoot) {
-                  $src = Get-ChildItem $osslRoot -Recurse -Filter $dn -File -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($osslRoot -and (Test-Path -LiteralPath $osslRoot)) {
+                  $src = Get-ChildItem -LiteralPath $osslRoot -Recurse -Filter $dn -ErrorAction SilentlyContinue |
+                      Where-Object { -not $_.PSIsContainer } | Select-Object -First 1
               }
               if ($src) {
                   Copy-Item -LiteralPath $src.FullName -Destination $dstBin -Force
