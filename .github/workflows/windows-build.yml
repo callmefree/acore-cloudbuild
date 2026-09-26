@@ -279,10 +279,91 @@ jobs:
           if (-not (Test-Path (Join-Path $stage 'bin/worldserver.exe'))) { throw 'worldserver.exe missing after copy' }
           if (-not (Test-Path (Join-Path $stage 'bin/authserver.exe')))  { throw 'authserver.exe missing after copy' }
 
-          # 2) 运行期依赖：AC 链接 mysqlclient.lib，运行需 libmysql.dll
-          $lm = Get-ChildItem 'C:\tools\mysql\current' -Recurse -Filter 'libmysql.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($lm) { Copy-Item -LiteralPath $lm.FullName -Destination $dstBin -Force; Write-Host 'packaged libmysql.dll' }
-          else { Write-Host '::warning::libmysql.dll not found under C:\tools\mysql\current' }
+          # 2) 运行期依赖（一）：libmysql.dll
+          #
+          # 必须用**编译期实际那一套** MySQL 的 DLL。AC 启动时会比对
+          #   mysql_get_client_version()（运行期 DLL） vs MYSQL_VERSION_ID（编译期头文件）
+          # 不一致就直接 FATAL：ACE00046 "... does not match the version id used to compile
+          # AzerothCore"。实测踩坑：本 job 虽然预下载了 MySQL 8.4.9，但 acore.sh 自动探测
+          # 时命中了 runner 镜像自带的 MySQL 8.0.46（编译期 80046），旧版此处却盲目复制
+          # C:\tools\mysql\current 的 8.4.9 DLL（80409）-> 产物在目标机启动即 ACE00046 秒退。
+          #
+          # 所以：先读 CMakeCache.txt 回溯编译期实际使用的 MySQL，再取它的 libmysql.dll。
+          $cacheTxt = ''
+          $cacheFile = Get-ChildItem $ac -Recurse -Filter 'CMakeCache.txt' -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -notmatch '\\artifacts\\' } | Select-Object -First 1
+          if ($cacheFile) { $cacheTxt = Get-Content $cacheFile.FullName -Raw; Write-Host "CMakeCache: $($cacheFile.FullName)" }
+
+          $libPath = $null; $incDir = $null
+          if ($cacheTxt) {
+              $m1 = [regex]::Match($cacheTxt, '(?im)^\s*[A-Za-z0-9_.]*MYSQL[A-Za-z0-9_.]*\s*[:=][^\r\n]*?(?<p>[A-Za-z]:[\\/][^\r\n;"]*mysqlclient\.lib)')
+              if ($m1.Success) { $libPath = $m1.Groups['p'].Value }
+              $m2 = [regex]::Match($cacheTxt, '(?im)^\s*[A-Za-z0-9_.]*MYSQL[A-Za-z0-9_.]*INCLUDE[A-Za-z0-9_.]*\s*[:=]\s*(?<p>[^\r\n]+)')
+              if ($m2.Success) { $incDir = ($m2.Groups['p'].Value -split ';')[0].Trim().Trim('"') }
+          }
+          Write-Host "compile-time MySQL lib  : $libPath"
+          Write-Host "compile-time MySQL inc  : $incDir"
+
+          $libmysql = $null
+          if ($libPath) {
+              # .../<mysqlRoot>/lib/mysqlclient.lib -> <mysqlRoot>
+              $mysqlRoot = Split-Path (Split-Path $libPath -Parent) -Parent
+              $libmysql = Get-ChildItem $mysqlRoot -Recurse -Filter 'libmysql.dll' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $libmysql -and $incDir) {
+              # 头文件目录 .../<mysqlRoot>/include -> <mysqlRoot>
+              $mysqlRoot = Split-Path $incDir -Parent
+              $libmysql = Get-ChildItem $mysqlRoot -Recurse -Filter 'libmysql.dll' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $libmysql) {
+              Write-Host '::warning::could not locate compile-time libmysql.dll from CMakeCache; falling back to C:\tools\mysql\current'
+              $libmysql = Get-ChildItem 'C:\tools\mysql\current' -Recurse -Filter 'libmysql.dll' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $libmysql) { throw 'libmysql.dll not found - 产物将无法启动（ACE00046 或缺 DLL）' }
+          Copy-Item -LiteralPath $libmysql.FullName -Destination $dstBin -Force
+          $dllVer = (Get-Item (Join-Path $dstBin 'libmysql.dll')).VersionInfo.ProductVersion
+          Write-Host ("packaged libmysql.dll {0}  <- {1}" -f $dllVer, $libmysql.FullName)
+
+          # 硬校验：编译期 MYSQL_VERSION_ID 与 DLL 版本必须一致；不一致直接 fail，
+          # 避免又产出一个"看着绿、装上去秒退"的包。
+          $verId = $null
+          $hdr = $null
+          if ($incDir) { $hdr = Get-ChildItem $incDir -Recurse -Filter 'mysql_version.h' -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          if ($hdr) {
+              $hm = [regex]::Match((Get-Content $hdr.FullName -Raw), '(?m)^\s*#define\s+MYSQL_VERSION_ID\s+(\d+)')
+              if ($hm.Success) { $verId = [int]$hm.Groups[1].Value }
+              Write-Host ("compile-time MYSQL_VERSION_ID = {0}  ({1})" -f $verId, $hdr.FullName)
+          }
+          if ($verId -and $dllVer) {
+              $p = $dllVer.Split('.')
+              $dllId = [int]$p[0] * 10000 + [int]$p[1] * 100 + [int]$p[2]
+              Write-Host ("runtime libmysql version id  = {0}" -f $dllId)
+              if ($dllId -ne $verId) {
+                  throw ("libmysql.dll version mismatch: runtime id {0} != compile-time id {1}. " +
+                         "该产物在目标机会以 ACE00046 秒退，已阻止打包。") -f $dllId, $verId
+              }
+              Write-Host 'libmysql.dll version check: OK'
+          } else {
+              Write-Host '::warning::skipped libmysql version cross-check (could not read MYSQL_VERSION_ID or DLL version)'
+          }
+
+          # 2b) 运行期依赖（二）：OpenSSL 3 DLL
+          #   AC 的 PE 直接导入 libssl-3-x64/libcrypto-3-x64，缺失则**无任何输出秒退**；
+          #   OpenSSLCrypto.cpp 还会断言 legacy.dll 存在（legacy provider）。
+          #   这两样 runner 的 MySQL zip 里没有，必须从 OpenSSL 安装目录带出来。
+          $osslRoot = $env:OPENSSL_ROOT_DIR
+          foreach ($dn in @('libssl-3-x64.dll','libcrypto-3-x64.dll','legacy.dll')) {
+              $src = $null
+              if ($osslRoot) {
+                  $src = Get-ChildItem $osslRoot -Recurse -Filter $dn -File -ErrorAction SilentlyContinue | Select-Object -First 1
+              }
+              if ($src) {
+                  Copy-Item -LiteralPath $src.FullName -Destination $dstBin -Force
+                  Write-Host ("packaged {0}  <- {1}" -f $dn, $src.FullName)
+              } else {
+                  Write-Host ("::warning::{0} not found under {1} - 目标机需自行补齐，否则启动无输出秒退" -f $dn, $osslRoot)
+              }
+          }
 
           # 3) 配置模板：按 worldserver.conf.dist 反查所在目录（含主配置 + modules/*.conf.dist）
           $confHit = Get-ChildItem $ac -Recurse -Filter 'worldserver.conf.dist' -File -ErrorAction SilentlyContinue |
