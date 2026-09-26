@@ -21,16 +21,25 @@ mod-solocraft|https://github.com/azerothcore/mod-solocraft.git|master|1
 mod-instanced-worldbosses|https://github.com/azerothcore/mod-instanced-worldbosses.git|master|1
 mod-ale|https://github.com/azerothcore/mod-ale.git|master|1
 #
-# --- [X] 与当前 AC master 不兼容，实测编译失败（=0）--------------------------------
-# 2026-09-25 用 AC master(b233191) + MSVC 实测，以下三个模块编译不过（共 37 个错误）：
-#   mod-solo-raids (25 错)：WorldObject* → Unit* 转换失败，多处用了已改签名的取目标 API
-#   mod-gauntlet   (8 错)：GauntletMgr.cpp 用了 WorldSession::IsBot —— 那是 playerbots 分支才有的 API，
-#                          且用户明确"不要 bot"，与本方案冲突；另有 Shaman.cpp/TrophyHunter.cpp 语法错误
-#   mod-city-siege (4 错)：PathGenerator 已无 SetNavTerrainCost / SetExcludeFlags，NAV_GROUND_STEEP 未定义
-# 处置：首轮摘掉拿绿构建；后续若要启用，需各自 pin 到兼容的 AC 提交或打补丁。
-mod-solo-raids|https://github.com/TheTollski/mod-solo-raids.git|master|0
+# --- [X] 与当前 AC master 不兼容者（=0，已实测）--------------------------------------
+# mod-city-siege (4 错)：PathGenerator 已无 SetNavTerrainCost / SetExcludeFlags，NAV_GROUND_STEEP 未定义
+# 处置：暂缓；若要启用需 pin 到兼容的 AC 提交或打补丁。
 mod-city-siege|https://github.com/DustinHendrickson/mod-city-siege.git|main|0
-mod-gauntlet|https://github.com/ngc7052/mod-gauntlet.git|master|0
+#
+# --- [P] 经本地补丁修复后启用（=1，补丁见 ci/patches/）---------------------------------
+# 2026-09-25 实测在 AC master 上编译失败，2026-09-26 打补丁修复后启用：
+#   mod-solo-raids (25 错)：AC master 把 Spell::GetCaster() 返回类型从 Unit* 改成 WorldObject*
+#       （为支持 GameObject 施法者），模块仍直接赋给 Unit* → C2440。
+#       补丁：全部 26 处改为 `spell->GetCaster() ? ...->ToUnit() : nullptr`（null 安全，语义不变）。
+#   mod-gauntlet   (8 错)：两类问题
+#       ① GauntletMgr.cpp 用了 WorldSession::IsBot() —— playerbots 分支专属 API，core-only 构建不存在。
+#          补丁：去掉该判断（本构建无 playerbots，不存在需要过滤的 bot 会话，语义不变）。
+#       ② Shaman.cpp / TrophyHunter.cpp 里把局部变量命名为 `near` —— windef.h 有 `#define near`
+#          遗留宏，声明被预处理成 `bool = false;` → C2513 + 连带语法错误。补丁：改名 closeEnough。
+# 补丁文件名约定：ci/patches/<模块目录名>__<描述>.patch，由 workflow 在 clone 之后、build 之前
+# 用 `git apply --ignore-whitespace` 应用；应用失败会直接 fail 构建（不会静默放过）。
+mod-solo-raids|https://github.com/TheTollski/mod-solo-raids.git|master|1
+mod-gauntlet|https://github.com/ngc7052/mod-gauntlet.git|master|1
 # mod-ale = AzerothCore Lua Engine (ALE)。AC 的 modules/CMakeLists.txt 对其有专门分支(MOD_ALE_FOUND)：
 #   静态编入时把 lualib 链进 modules 目标，并把 LuaEngine/extensions 装到 bin/lua_scripts/。
 #   Lua 不是仓库自带源码——ALE 在 CMake configure 期用 FetchContent 从 lua.org 下载，runner 需外网。
