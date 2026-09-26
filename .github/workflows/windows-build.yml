@@ -208,8 +208,10 @@ jobs:
             # 用途：上游模块尚未适配当前 AC master 时，在 clone 之后、configure/build 之前
             # 就地修正。应用失败直接 fail，避免"以为编进去了其实还是坏代码"。
             # 必须放在 rm -rf .git 之前——git apply 需要仓库上下文。
+            # 注意：git -C <模块目录> 会把相对路径按模块目录解析，所以补丁目录必须先转成绝对路径。
             PATCHDIR="../buildrepo/ci/patches"
             if [ -d "$PATCHDIR" ]; then
+              PATCHDIR="$(cd "$PATCHDIR" && pwd)"
               for p in "$PATCHDIR/$dir"__*.patch; do
                 [ -f "$p" ] || continue
                 echo "PATCH $(basename "$p") -> modules/$dir"
