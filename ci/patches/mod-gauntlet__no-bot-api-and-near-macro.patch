@@ -1,0 +1,67 @@
+diff --git a/src/GauntletMgr.cpp b/src/GauntletMgr.cpp
+index abb2efd..cf90763 100644
+--- a/src/GauntletMgr.cpp
++++ b/src/GauntletMgr.cpp
+@@ -336,8 +336,9 @@ namespace Gauntlet
+     {
+         if (!player || !player->GetSession())
+             return false;
+-        if (_playersOnly && player->GetSession()->IsBot())
+-            return false;
++        // NOTE: WorldSession::IsBot() is a mod-playerbots API and does not exist in
++        // a core-only build. This build has no playerbots, so there can be no bot
++        // sessions to filter out and the "players only" rule is satisfied as-is.
+         return true;
+     }
+ 
+diff --git a/src/mechanics/class/Shaman.cpp b/src/mechanics/class/Shaman.cpp
+index d772863..cefd384 100644
+--- a/src/mechanics/class/Shaman.cpp
++++ b/src/mechanics/class/Shaman.cpp
+@@ -283,13 +283,15 @@ namespace Gauntlet
+         private:
+             static bool Anchored(Player* player)
+             {
+-                bool near = false;
+-                ForEachTotem(player, [&near, player](uint8, Creature* totem)
++                // NOTE: do not name this "near" - windef.h defines `near` as a
++                // legacy macro, which turns the declaration into `bool = false;`.
++                bool closeEnough = false;
++                ForEachTotem(player, [&closeEnough, player](uint8, Creature* totem)
+                 {
+                     if (player->GetExactDist2d(totem) <= ANCHOR_YARDS)
+-                        near = true;
++                        closeEnough = true;
+                 });
+-                return near;
++                return closeEnough;
+             }
+ 
+             bool _anchored  = false;
+diff --git a/src/mechanics/enemy/TrophyHunter.cpp b/src/mechanics/enemy/TrophyHunter.cpp
+index 9585768..e4abe47 100644
+--- a/src/mechanics/enemy/TrophyHunter.cpp
++++ b/src/mechanics/enemy/TrophyHunter.cpp
+@@ -76,18 +76,18 @@ namespace Gauntlet
+                     return;
+                 _sweepMs = 0;
+ 
+-                bool near = false;
++                bool closeEnough = false;
+                 for (Creature* c : CreaturesNear(player, Rules::TROPHY_YARDS))
+                     if (c->IsAlive() && IsSilverDragon(c))
+                     {
+-                        near = true;
++                        closeEnough = true;
+                         break;
+                     }
+ 
+-                if (near == _near)
++                if (closeEnough == _near)
+                     return;
+ 
+-                _near = near;
++                _near = closeEnough;
+ 
+                 // Only on the edge. The card is a standing danger while one is
+                 // alive and a line every second would be unreadable, but the
