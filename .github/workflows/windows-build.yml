@@ -204,6 +204,21 @@ jobs:
               echo "CLONE $repo @$branch -> modules/$dir"
               git clone --depth 1 --branch "$branch" "$repo" "modules/$dir"
             fi
+            # --- 本地补丁（ci/patches/<模块目录名>__*.patch）---------------------------
+            # 用途：上游模块尚未适配当前 AC master 时，在 clone 之后、configure/build 之前
+            # 就地修正。应用失败直接 fail，避免"以为编进去了其实还是坏代码"。
+            # 必须放在 rm -rf .git 之前——git apply 需要仓库上下文。
+            PATCHDIR="../buildrepo/ci/patches"
+            if [ -d "$PATCHDIR" ]; then
+              for p in "$PATCHDIR/$dir"__*.patch; do
+                [ -f "$p" ] || continue
+                echo "PATCH $(basename "$p") -> modules/$dir"
+                if ! git -C "modules/$dir" apply --ignore-whitespace --whitespace=nowarn "$p"; then
+                  echo "::error::failed to apply patch $(basename "$p") on modules/$dir"
+                  exit 1
+                fi
+              done
+            fi
             # 去掉 .git，避免打进产物
             rm -rf "modules/$dir/.git"
           done < "$MODULES_LIST"
