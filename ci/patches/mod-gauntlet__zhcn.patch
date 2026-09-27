@@ -113,7 +113,7 @@ index b98bc7a..a18cd59 100644
              if (p)
                  sGauntletAddon->SendTop(p, rank, name, tier, level, cause, conducts);
 diff --git a/src/GauntletMgr.cpp b/src/GauntletMgr.cpp
-index abb2efd..bd5424b 100644
+index abb2efd..40a2cbd 100644
 --- a/src/GauntletMgr.cpp
 +++ b/src/GauntletMgr.cpp
 @@ -14,6 +14,7 @@
@@ -135,7 +135,7 @@ index abb2efd..bd5424b 100644
  
          // Affix::Name() built "Wrathful Desperate Exposed" out of the boon, the
          // condition and the effect, and the shape is kept: the addon's chat
-@@ -423,14 +426,17 @@ namespace Gauntlet
+@@ -423,14 +426,24 @@ namespace Gauntlet
          // a condition rolled onto a card that did not have one.
          TradeDef const* trade = FindTrade(mechanic);
          if (condition != Condition::Always && !(trade && trade->condition == condition))
@@ -150,12 +150,19 @@ index abb2efd..bd5424b 100644
      std::string Mgr::DescribeOf(AffixInstance const& instance) const
      {
 +        if (char const* translated = ZhMechanicDescription(instance.mechanic))
-+            return std::string(translated) + ZhBoonClause(instance.boon, instance.boonMag);
++        {
++            std::string const specific = ZhSpecificClause(instance.mechanic, instance.boonMag);
++            // These three benefits only apply after a dodge, during a kill
++            // chain, or while solo; a generic always-on clause would mislead.
++            if (instance.mechanic == 14 || instance.mechanic == 15 || instance.mechanic == 24)
++                return std::string(translated) + specific;
++            return std::string(translated) + specific + ZhBoonClause(instance.boon, instance.boonMag);
++        }
 +
          if (instance.impl)
              return instance.impl->Describe(instance);
  
-@@ -799,7 +805,7 @@ namespace Gauntlet
+@@ -799,7 +812,7 @@ namespace Gauntlet
          st->offerMs     = 0;
  
          ChatHandler ch(player->GetSession());
@@ -164,7 +171,7 @@ index abb2efd..bd5424b 100644
          for (uint32 i = 0; i < st->pending.size(); ++i)
          {
              Offer const& o = st->pending[i];
-@@ -809,8 +815,8 @@ namespace Gauntlet
+@@ -809,8 +822,8 @@ namespace Gauntlet
              // the player cannot take would be worse than saying so.
              if (o.mechanic == MECHANIC_NONE)
              {
@@ -175,7 +182,7 @@ index abb2efd..bd5424b 100644
                  continue;
              }
  
-@@ -834,15 +840,15 @@ namespace Gauntlet
+@@ -834,15 +847,15 @@ namespace Gauntlet
              ch.PSendSysMessage("  |cffffff00{}.|r |cff{}{}|r - {}", i + 1, RarityColor(o.rarity),
                                 NameOf(o.mechanic, o.condition, o.boon), DescribeOf(preview));
          }
@@ -195,7 +202,7 @@ index abb2efd..bd5424b 100644
      }
  
      uint8 Mgr::RerollCharges(RunState const& st)
-@@ -867,14 +873,14 @@ namespace Gauntlet
+@@ -867,14 +880,14 @@ namespace Gauntlet
          ChatHandler ch(player->GetSession());
          if (st->pending.empty())
          {
@@ -212,7 +219,7 @@ index abb2efd..bd5424b 100644
              return false;
          }
  
-@@ -895,8 +901,8 @@ namespace Gauntlet
+@@ -895,8 +908,8 @@ namespace Gauntlet
              "VALUES ({}, {}, 'reroll', 0, 0, {})",
              low, std::min<uint32>(tier, 255u), static_cast<uint32>(GeneratorVersion));
  
@@ -223,7 +230,7 @@ index abb2efd..bd5424b 100644
  
          // Rebuilds with the new counter and reprints -- the same lines, so the
          // addon's chat fallback re-scrapes the fresh set the way it scraped
-@@ -917,7 +923,7 @@ namespace Gauntlet
+@@ -917,7 +930,7 @@ namespace Gauntlet
          ChatHandler ch(player->GetSession());
          if (st->pending.empty())
          {
@@ -232,7 +239,7 @@ index abb2efd..bd5424b 100644
              return false;
          }
  
-@@ -945,7 +951,7 @@ namespace Gauntlet
+@@ -945,7 +958,7 @@ namespace Gauntlet
          // Save writes the run row's tier and the state store together.
          Save(player);
  
@@ -241,7 +248,7 @@ index abb2efd..bd5424b 100644
                             tier, static_cast<uint32>(banked));
          return true;
      }
-@@ -1076,11 +1082,11 @@ namespace Gauntlet
+@@ -1076,11 +1089,11 @@ namespace Gauntlet
          // Rarity colour rather than the module's yellow, for the offer line's
          // reason: what was just taken is the thing to say most about it.
          ChatHandler(player->GetSession()).PSendSysMessage(
@@ -255,7 +262,7 @@ index abb2efd..bd5424b 100644
                                      player->GetName(), st->tier, name));
          return true;
      }
-@@ -1154,7 +1160,7 @@ namespace Gauntlet
+@@ -1154,7 +1167,7 @@ namespace Gauntlet
  
          if (_announce)
              sWorldSessionMgr->SendServerMessage(SERVER_MSG_STRING,
@@ -264,7 +271,7 @@ index abb2efd..bd5424b 100644
                                      player->GetName(), player->GetLevel(), st->tier, cause));
      }
  
-@@ -2157,7 +2163,7 @@ namespace Gauntlet
+@@ -2157,7 +2170,7 @@ namespace Gauntlet
          // affix acted when they die -- cannot be answered with "install the
          // addon", so the same fact goes out as a chat line.
          ChatHandler(player->GetSession()).PSendSysMessage(
@@ -311,10 +318,10 @@ index a8d73e0..74148bc 100644
  
 diff --git a/src/GauntletZhCN.h b/src/GauntletZhCN.h
 new file mode 100644
-index 0000000..bb1ad26
+index 0000000..2cc42c0
 --- /dev/null
 +++ b/src/GauntletZhCN.h
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,290 @@
 +#pragma once
 +#include "Gauntlet.h"
 +#include <string>
@@ -583,6 +590,26 @@ index 0000000..bb1ad26
 +    default: return "";
 +    }
 +    return std::string(" 收益：") + benefit + "提高 " + std::to_string(static_cast<unsigned>(magnitude)) + "%。";
++}
++// These benefits are bound to a particular action or condition. The generic
++// BoonClause would incorrectly imply a permanent bonus for 14, 15 and 24.
++inline std::string ZhSpecificClause(uint16 id, uint8 magnitude) {
++    unsigned const n = static_cast<unsigned>(magnitude);
++    switch (id) {
++    case 14: return " 成功躲开落点后，移动速度提高 " + std::to_string(n ? n : 10) + "%，持续 5 秒。";
++    case 15: return " 每层狂乱使造成的伤害提高 " + std::to_string(n ? n : 6) + "%，最多叠加 5 层；受到伤害会清空层数。";
++    case 24: return " 独自行动时获得的经验提高 " + std::to_string(n ? n : 20) + "%。";
++    case 37: return n ? " 收益：逃脱的冷却时间缩短 " + std::to_string(n) + "%。" : "";
++    case 38: return n ? " 收益：20 码外的射击伤害提高 " + std::to_string(n) + "%。" : "";
++    case 40: return n ? " 收益：疾跑的冷却时间缩短 " + std::to_string(n) + "%。" : "";
++    case 42: return n ? " 收益：直接闪避 " + std::to_string(n) + "% 的近战攻击。" : "";
++    case 47: return n ? " 收益：防护恐惧结界的冷却时间缩短 " + std::to_string(n) + "%。" : "";
++    case 49: return n ? " 收益：亡者复生的冷却时间缩短 " + std::to_string(n) + "%。" : "";
++    case 56: return n ? " 收益：冰霜新星的冷却时间缩短 " + std::to_string(n) + "%。" : "";
++    case 68: return n ? " 收益：战斗中的法力恢复速度提高 " + std::to_string(n) + "%。" : "";
++    case 32: return n ? " 收益：圣光术的法力消耗降低 " + std::to_string(n) + "%。" : "";
++    default: return "";
++    }
 +}
 +}
 diff --git a/src/mechanics/attrition/BloodMagic.cpp b/src/mechanics/attrition/BloodMagic.cpp
