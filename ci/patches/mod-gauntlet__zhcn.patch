@@ -1028,6 +1028,25 @@ index 10ce11f..e67cf04 100644
                      ms / 60000);
          }
  
+diff --git a/src/mechanics/class/SelfControl.cpp b/src/mechanics/class/SelfControl.cpp
+index b8e34bb..51f1c6f 100644
+--- a/src/mechanics/class/SelfControl.cpp
++++ b/src/mechanics/class/SelfControl.cpp
+@@ -74,10 +74,10 @@ namespace Gauntlet
+     {
+         switch (kind)
+         {
+-            case Kind::Confuse: return "you lose your bearings";
+-            case Kind::Root:    return "your feet will not move";
+-            case Kind::Stun:    return "you are stunned";
+-            case Kind::Flee:    return "you turn and run";
++            case Kind::Confuse: return "你迷失了方向";
++            case Kind::Root:    return "你无法移动";
++            case Kind::Stun:    return "你被击晕";
++            case Kind::Flee:    return "你因恐惧而逃跑";
+             default:            return "";
+         }
+     }
 diff --git a/src/mechanics/class/Shaman.cpp b/src/mechanics/class/Shaman.cpp
 index d772863..935372d 100644
 --- a/src/mechanics/class/Shaman.cpp
@@ -1177,9 +1196,27 @@ index 547a840..881430f 100644
                      continue;
                  }
 diff --git a/src/mechanics/enemy/CallToArms.cpp b/src/mechanics/enemy/CallToArms.cpp
-index 8d14887..ae2b3a3 100644
+index 8d14887..f44e84b 100644
 --- a/src/mechanics/enemy/CallToArms.cpp
 +++ b/src/mechanics/enemy/CallToArms.cpp
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "GauntletMechanic.h"
++#include "GauntletZhCN.h"
+ 
+ #include "GauntletAddon.h"
+ #include "GauntletRegistry.h"
+@@ -52,8 +53,7 @@ namespace Gauntlet
+ 
+         char const* MechanicName()
+         {
+-            MechanicDef const* def = FindMechanic(MECHANIC_CALL_TO_ARMS);
+-            return def ? def->name : "Call to Arms";
++            return ZhMechanicName(MECHANIC_CALL_TO_ARMS);
+         }
+ 
+         char const* MechanicKey()
 @@ -194,8 +194,8 @@ namespace Gauntlet
  
              if (player->GetSession())
@@ -1205,9 +1242,27 @@ index bafc260..832b9a7 100644
  
          void Champions::Restore(Player* owner, Champion& record)
 diff --git a/src/mechanics/enemy/Craven.cpp b/src/mechanics/enemy/Craven.cpp
-index df00407..fb5a20b 100644
+index df00407..072f2c8 100644
 --- a/src/mechanics/enemy/Craven.cpp
 +++ b/src/mechanics/enemy/Craven.cpp
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "GauntletMechanic.h"
++#include "GauntletZhCN.h"
+ 
+ #include "GauntletAddon.h"
+ #include "GauntletRegistry.h"
+@@ -67,8 +68,7 @@ namespace Gauntlet
+ 
+         char const* MechanicName()
+         {
+-            MechanicDef const* def = FindMechanic(MECHANIC_CRAVEN);
+-            return def ? def->name : "Craven";
++            return ZhMechanicName(MECHANIC_CRAVEN);
+         }
+ 
+         char const* MechanicKey()
 @@ -244,8 +244,8 @@ namespace Gauntlet
  
              if (player->GetSession())
@@ -1240,9 +1295,27 @@ index df00407..fb5a20b 100644
  
      GAUNTLET_MECHANIC(7, Craven);
 diff --git a/src/mechanics/enemy/Cunning.cpp b/src/mechanics/enemy/Cunning.cpp
-index 1bf6500..776cfce 100644
+index 1bf6500..7c9db6d 100644
 --- a/src/mechanics/enemy/Cunning.cpp
 +++ b/src/mechanics/enemy/Cunning.cpp
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "GauntletMechanic.h"
++#include "GauntletZhCN.h"
+ 
+ #include "GauntletAddon.h"
+ #include "GauntletRegistry.h"
+@@ -70,8 +71,7 @@ namespace Gauntlet
+ 
+         char const* MechanicName()
+         {
+-            MechanicDef const* def = FindMechanic(MECHANIC_CUNNING);
+-            return def ? def->name : "Cunning";
++            return ZhMechanicName(MECHANIC_CUNNING);
+         }
+ 
+         char const* MechanicKey()
 @@ -299,8 +299,8 @@ namespace Gauntlet
  
              if (player->GetSession())
@@ -1255,9 +1328,27 @@ index 1bf6500..776cfce 100644
  
          std::string Cunning::Describe(AffixInstance const& self) const
 diff --git a/src/mechanics/enemy/DeathRattle.cpp b/src/mechanics/enemy/DeathRattle.cpp
-index 0e22c05..4f776de 100644
+index 0e22c05..d898655 100644
 --- a/src/mechanics/enemy/DeathRattle.cpp
 +++ b/src/mechanics/enemy/DeathRattle.cpp
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "GauntletMechanic.h"
++#include "GauntletZhCN.h"
+ 
+ #include "GauntletAddon.h"
+ #include "GauntletRegistry.h"
+@@ -103,8 +104,7 @@ namespace Gauntlet
+ 
+         char const* MechanicName()
+         {
+-            MechanicDef const* def = FindMechanic(MECHANIC_DEATH_RATTLE);
+-            return def ? def->name : "Death Rattle";
++            return ZhMechanicName(MECHANIC_DEATH_RATTLE);
+         }
+ 
+         char const* MechanicKey()
 @@ -344,7 +344,7 @@ namespace Gauntlet
  
              if (player->GetSession())
@@ -1268,9 +1359,27 @@ index 0e22c05..4f776de 100644
          }
  
 diff --git a/src/mechanics/enemy/Grudge.cpp b/src/mechanics/enemy/Grudge.cpp
-index 7d6c4d4..f43ea58 100644
+index 7d6c4d4..46a3a93 100644
 --- a/src/mechanics/enemy/Grudge.cpp
 +++ b/src/mechanics/enemy/Grudge.cpp
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "GauntletMechanic.h"
++#include "GauntletZhCN.h"
+ 
+ #include "GauntletAddon.h"
+ #include "GauntletRegistry.h"
+@@ -70,8 +71,7 @@ namespace Gauntlet
+ 
+         char const* MechanicName()
+         {
+-            MechanicDef const* def = FindMechanic(MECHANIC_GRUDGE);
+-            return def ? def->name : "Grudge";
++            return ZhMechanicName(MECHANIC_GRUDGE);
+         }
+ 
+         char const* MechanicKey()
 @@ -217,7 +217,7 @@ namespace Gauntlet
  
              if (player->GetSession())
@@ -1744,9 +1853,27 @@ index 12e3c80..2a6c8ac 100644
  
              std::vector<ObjectGuid> _chests;
 diff --git a/src/mechanics/tempo/FallingSky.cpp b/src/mechanics/tempo/FallingSky.cpp
-index a1bd478..e83152a 100644
+index a1bd478..892edef 100644
 --- a/src/mechanics/tempo/FallingSky.cpp
 +++ b/src/mechanics/tempo/FallingSky.cpp
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "GauntletMechanic.h"
++#include "GauntletZhCN.h"
+ #include "GauntletRules.h"
+ #include "GauntletAddon.h"
+ #include "GauntletRegistry.h"
+@@ -218,8 +219,7 @@ namespace Gauntlet
+ 
+         char const* MechanicName()
+         {
+-            MechanicDef const* def = FindMechanic(FALLING_SKY);
+-            return def ? def->name : "Falling Sky";
++            return ZhMechanicName(FALLING_SKY);
+         }
+ 
+         class FallingSky final : public IMechanic
 @@ -541,7 +541,7 @@ namespace Gauntlet
              // who is not running the addon. The name comes from the registry,
              // so it is the same string the offer and the panel used.
@@ -1766,9 +1893,27 @@ index a1bd478..e83152a 100644
              }
          }
 diff --git a/src/mechanics/tempo/Falter.cpp b/src/mechanics/tempo/Falter.cpp
-index 2661b95..f211b7c 100644
+index 2661b95..450029f 100644
 --- a/src/mechanics/tempo/Falter.cpp
 +++ b/src/mechanics/tempo/Falter.cpp
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "GauntletMechanic.h"
++#include "GauntletZhCN.h"
+ 
+ #include "GauntletAddon.h"
+ #include "GauntletRegistry.h"
+@@ -74,8 +75,7 @@ namespace Gauntlet
+ 
+         char const* MechanicName()
+         {
+-            MechanicDef const* def = FindMechanic(MECHANIC_FALTER);
+-            return def ? def->name : "Falter";
++            return ZhMechanicName(MECHANIC_FALTER);
+         }
+ 
+         char const* MechanicKey()
 @@ -272,8 +272,8 @@ namespace Gauntlet
  
              if (player->GetSession())
