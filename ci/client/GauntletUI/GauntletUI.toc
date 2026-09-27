@@ -1,0 +1,10 @@
+## Interface: 30300
+## Title: Gauntlet 试炼 UI
+## Notes: 为 mod-gauntlet 提供小地图按钮、词缀浏览与脱战时的词缀选择界面。
+## Author: ngc7052
+## Version: 3.0
+## SavedVariables: GauntletUIDB
+Data.lua
+Protocol.lua
+Panel.lua
+Hud.lua

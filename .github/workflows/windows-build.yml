@@ -413,6 +413,13 @@ jobs:
               Write-Host ("packaged modules/ ({0} files)" -f (Get-ChildItem (Join-Path $stage 'modules') -Recurse -File).Count)
           } else { Write-Host '::warning::no modules/ produced' }
 
+          # 6) 可直接复制到 3.3.5a 客户端的中文试炼插件。
+          $gauntletClient = Join-Path $env:GITHUB_WORKSPACE 'buildrepo/ci/client/GauntletUI'
+          if (-not (Test-Path (Join-Path $gauntletClient 'Data.lua'))) {
+              throw 'localized GauntletUI client files are missing'
+          }
+          Copy-Into $gauntletClient (Join-Path $stage 'Interface/AddOns/GauntletUI')
+
           Get-ChildItem $stage | ForEach-Object { Write-Host ("  stage: {0}" -f $_.Name) }
 
       - name: Zip
@@ -458,7 +465,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          TAG="build-$AC_SHA_SHORT"
+          # Keep the earlier release when only the module/translation changes
+          # and AzerothCore master remains on the same commit.
+          TAG="build-$AC_SHA_SHORT-zhcn-${GITHUB_SHA:0:7}"
           ZIP="$ZIP_PATH"
           echo "publishing $ZIP as $TAG to $GH_REPO"
           # gh 在非 git 目录下无法推断仓库，所有命令都要带 --repo / 走 REST。

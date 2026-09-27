@@ -1,0 +1,1794 @@
+diff --git a/mod-gauntlet.cmake b/mod-gauntlet.cmake
+index 2d30c4e..cc56b55 100644
+--- a/mod-gauntlet.cmake
++++ b/mod-gauntlet.cmake
+@@ -35,6 +35,12 @@
+ # does anyway.
+ file(GLOB GAUNTLET_TEST_SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/*.cpp")
+ 
++# Chinese gameplay strings are UTF-8 in the source patch. MSVC otherwise
++# interprets a BOM-less file using the runner's active Windows code page.
++if(MSVC)
++  add_compile_options(/utf-8)
++endif()
++
+ # The one case where registering would break the build rather than help it.
+ # unit_tests resolves the module's symbols out of the modules library, and a
+ # module is only in that library when its linkage is static -- a dynamic module
+diff --git a/src/GauntletCommands.cpp b/src/GauntletCommands.cpp
+index b98bc7a..a18cd59 100644
+--- a/src/GauntletCommands.cpp
++++ b/src/GauntletCommands.cpp
+@@ -327,29 +327,31 @@ namespace Gauntlet
+             if (timed <= 1)
+             {
+                 handler->PSendSysMessage(
+-                    "  Pacing: {} affix acts on a timer; it acts as often as its card says.", timed);
++                    "  节奏：{} 个词缀按计时触发，间隔与卡牌说明一致。", timed);
+                 return;
+             }
+ 
+             handler->PSendSysMessage(
+-                "  Pacing: {} affixes act on a timer, so each one waits x{:.2f} longer than its "
+-                "card says (a card saying 20s acts every {}s). No two of them land within {}s "
+-                "of each other.",
++                "  节奏：{} 个词缀按计时触发，各自间隔为卡牌说明的 {:.2f} 倍"
++                "（标称 20 秒的词缀约每 {} 秒触发一次）。任意两个词缀至少间隔 {} 秒。",
+                 timed, mult, uint32(20.0f * mult + 0.5f), clock->MinSpacingMs() / 1000u);
+         }
+ 
+         void PrintProducts(ChatHandler* handler, Player* player)
+         {
++            static constexpr char const* names[] = {
++                "受到伤害", "造成伤害", "受到治疗", "最大生命", "敌人速度", "经验获取"
++            };
+             std::string line;
+             for (uint8 k = 0; k < static_cast<uint8>(AggregateKind::MAX); ++k)
+             {
+                 AggregateKind const kind = static_cast<AggregateKind>(k);
+                 if (!line.empty())
+                     line += " | ";
+-                line += Acore::StringFormat("{} x{:.2f}", AggregateKindName(kind),
++                line += Acore::StringFormat("{} x{:.2f}", names[k],
+                                             sGauntlet->Aggregate(player, kind));
+             }
+-            handler->PSendSysMessage("  Now: {}", line);
++            handler->PSendSysMessage("  当前总效果：{}", line);
+         }
+ 
+         // Every line the debug subtree prints says "[Gauntlet debug]" and not
+@@ -395,7 +397,7 @@ namespace Gauntlet
+         {
+             RunState* st = player ? sGauntlet->Get(player) : nullptr;
+             if (!st)
+-                handler->SendErrorMessage("|cffff2020[Gauntlet]|r No Gauntlet run is loaded for this character.");
++                handler->SendErrorMessage("|cffff2020[试炼]|r 此角色尚未加载试炼记录。");
+             return st;
+         }
+ 
+@@ -830,7 +832,7 @@ public:
+ 
+         if (!sGauntlet->Pick(p, index))
+         {
+-            handler->PSendSysMessage("|cffff2020[Gauntlet]|r Nothing to pick, or invalid choice.");
++            handler->PSendSysMessage("|cffff2020[试炼]|r 当前没有可选词缀，或序号无效。");
+             return true;
+         }
+ 
+@@ -872,8 +874,8 @@ public:
+         if (!st)
+             return false;
+ 
+-        handler->PSendSysMessage("|cffff2020[Gauntlet]|r seed {} | tier {} | {}",
+-                                 st->seed, st->tier, st->dead ? "RETIRED" : "alive");
++        handler->PSendSysMessage("|cffff2020[试炼]|r 种子 {} | 层级 {} | {}",
++                                 st->seed, st->tier, st->dead ? "已退役" : "进行中");
+         for (uint32 i = 0; i < st->affixes.size(); ++i)
+             PrintAffixLine(handler, i + 1, st->affixes[i]);
+ 
+@@ -904,10 +906,10 @@ public:
+             "SELECT `name`, `tier`, `level`, `cause`, `conducts` FROM `gauntlet_leaderboard` "
+             "ORDER BY `tier` DESC, `level` DESC LIMIT 10");
+ 
+-        handler->PSendSysMessage("|cffff2020[Gauntlet]|r Furthest runs:");
++        handler->PSendSysMessage("|cffff2020[试炼]|r 最高层级记录：");
+         if (!r)
+         {
+-            handler->PSendSysMessage("  No completed runs yet.");
++            handler->PSendSysMessage("  尚无已完成的挑战。");
+             return true;
+         }
+ 
+@@ -922,10 +924,10 @@ public:
+ 
+             std::string const conducts = f[4].Get<std::string>();
+ 
+-            handler->PSendSysMessage("  {}. {} - tier {} at level {} ({})", rank,
++            handler->PSendSysMessage("  {}. {} - 第 {} 层，角色等级 {}（{}）", rank,
+                                      name, tier, level, cause);
+             if (!conducts.empty())
+-                handler->PSendSysMessage("     |cff60c060conducts:|r {}", conducts);
++                handler->PSendSysMessage("     |cff60c060职业诅咒：|r {}", conducts);
+ 
+             if (p)
+                 sGauntletAddon->SendTop(p, rank, name, tier, level, cause, conducts);
+diff --git a/src/GauntletMgr.cpp b/src/GauntletMgr.cpp
+index abb2efd..bd5424b 100644
+--- a/src/GauntletMgr.cpp
++++ b/src/GauntletMgr.cpp
+@@ -14,6 +14,7 @@
+ #include "GauntletRegistry.h"
+ #include "GauntletTrades.h"
+ #include "GauntletSummons.h"
++#include "GauntletZhCN.h"
+ #include "Chat.h"
+ #include "Config.h"
+ #include "Creature.h"
+@@ -403,7 +404,9 @@ namespace Gauntlet
+         // A stored id this build does not carry still has to be printable:
+         // the run is a live character's and refusing to name it is worse than
+         // naming it badly.
+-        std::string name = def ? std::string(def->name) : ("#" + std::to_string(static_cast<uint32>(mechanic)));
++        char const* translated = ZhMechanicName(mechanic);
++        std::string name = translated ? std::string(translated)
++                                      : (def ? std::string(def->name) : ("#" + std::to_string(static_cast<uint32>(mechanic))));
+ 
+         // Affix::Name() built "Wrathful Desperate Exposed" out of the boon, the
+         // condition and the effect, and the shape is kept: the addon's chat
+@@ -423,14 +426,17 @@ namespace Gauntlet
+         // a condition rolled onto a card that did not have one.
+         TradeDef const* trade = FindTrade(mechanic);
+         if (condition != Condition::Always && !(trade && trade->condition == condition))
+-            name = ConditionName(condition) + " " + name;
++            name = std::string(ZhConditionName(condition)) + "·" + name;
+         if (boon != Boon::None)
+-            name = BoonName(boon) + " " + name;
++            name = std::string(ZhBoonName(boon)) + "·" + name;
+         return name;
+     }
+ 
+     std::string Mgr::DescribeOf(AffixInstance const& instance) const
+     {
++        if (char const* translated = ZhMechanicDescription(instance.mechanic))
++            return std::string(translated) + ZhBoonClause(instance.boon, instance.boonMag);
++
+         if (instance.impl)
+             return instance.impl->Describe(instance);
+ 
+@@ -799,7 +805,7 @@ namespace Gauntlet
+         st->offerMs     = 0;
+ 
+         ChatHandler ch(player->GetSession());
+-        ch.PSendSysMessage("|cffff2020[Gauntlet]|r Tier {} reached. Choose your affix:", tier);
++        ch.PSendSysMessage("|cffff2020[试炼]|r 到达第 {} 层，请选择一个词缀：", tier);
+         for (uint32 i = 0; i < st->pending.size(); ++i)
+         {
+             Offer const& o = st->pending[i];
+@@ -809,8 +815,8 @@ namespace Gauntlet
+             // the player cannot take would be worse than saying so.
+             if (o.mechanic == MECHANIC_NONE)
+             {
+-                ch.PSendSysMessage("  |cffffff00{}.|r {} - {}", i + 1, "Nothing",
+-                                   "No affix is available to you at this tier.");
++                ch.PSendSysMessage("  |cffffff00{}.|r {} - {}", i + 1, "无选项",
++                                   "这一层没有适合你的词缀。");
+                 continue;
+             }
+ 
+@@ -834,15 +840,15 @@ namespace Gauntlet
+             ch.PSendSysMessage("  |cffffff00{}.|r |cff{}{}|r - {}", i + 1, RarityColor(o.rarity),
+                                NameOf(o.mechanic, o.condition, o.boon), DescribeOf(preview));
+         }
+-        ch.PSendSysMessage("Use |cff00ff00.gauntlet pick <number>|r to commit. It cannot be undone.");
++        ch.PSendSysMessage("输入 |cff00ff00.gauntlet pick <序号>|r 确认选择；选定后无法撤销。");
+ 
+         // The other two answers a tier takes, said where the choice is made:
+         // the addon draws them as buttons, and a chat-only player has no other
+         // way to learn they exist.
+         uint8 const charges = RerollCharges(*st);
+-        ch.PSendSysMessage("Or |cff00ff00.gauntlet reroll|r these three ({} charge{} left), or "
+-                           "|cff00ff00.gauntlet skip|r the tier and bank a charge.",
+-                           static_cast<uint32>(charges), charges == 1 ? "" : "s");
++        ch.PSendSysMessage("也可输入 |cff00ff00.gauntlet reroll|r 重掷三个选项（剩余 {} 次），"
++                           "或输入 |cff00ff00.gauntlet skip|r 跳过本层并积攒一次重掷。",
++                           static_cast<uint32>(charges));
+     }
+ 
+     uint8 Mgr::RerollCharges(RunState const& st)
+@@ -867,14 +873,14 @@ namespace Gauntlet
+         ChatHandler ch(player->GetSession());
+         if (st->pending.empty())
+         {
+-            ch.PSendSysMessage("|cffff2020[Gauntlet]|r There is no offer on the table to reroll.");
++            ch.PSendSysMessage("|cffff2020[试炼]|r 当前没有可重掷的词缀选项。");
+             return false;
+         }
+ 
+         uint8 const charges = RerollCharges(*st);
+         if (charges == 0)
+         {
+-            ch.PSendSysMessage("|cffff2020[Gauntlet]|r No reroll charges left. Skipping a tier banks one.");
++            ch.PSendSysMessage("|cffff2020[试炼]|r 重掷次数不足；跳过一层可积攒一次。");
+             return false;
+         }
+ 
+@@ -895,8 +901,8 @@ namespace Gauntlet
+             "VALUES ({}, {}, 'reroll', 0, 0, {})",
+             low, std::min<uint32>(tier, 255u), static_cast<uint32>(GeneratorVersion));
+ 
+-        ch.PSendSysMessage("|cffff2020[Gauntlet]|r Rerolled. {} charge{} left.",
+-                           static_cast<uint32>(charges - 1), charges - 1 == 1 ? "" : "s");
++        ch.PSendSysMessage("|cffff2020[试炼]|r 已重掷，剩余 {} 次。",
++                           static_cast<uint32>(charges - 1));
+ 
+         // Rebuilds with the new counter and reprints -- the same lines, so the
+         // addon's chat fallback re-scrapes the fresh set the way it scraped
+@@ -917,7 +923,7 @@ namespace Gauntlet
+         ChatHandler ch(player->GetSession());
+         if (st->pending.empty())
+         {
+-            ch.PSendSysMessage("|cffff2020[Gauntlet]|r There is no offer on the table to skip.");
++            ch.PSendSysMessage("|cffff2020[试炼]|r 当前没有可跳过的词缀选项。");
+             return false;
+         }
+ 
+@@ -945,7 +951,7 @@ namespace Gauntlet
+         // Save writes the run row's tier and the state store together.
+         Save(player);
+ 
+-        ch.PSendSysMessage("|cffff2020[Gauntlet]|r Tier {} declined. You bank a reroll charge ({} held).",
++        ch.PSendSysMessage("|cffff2020[试炼]|r 已跳过第 {} 层，积攒一次重掷（现有 {} 次）。",
+                            tier, static_cast<uint32>(banked));
+         return true;
+     }
+@@ -1076,11 +1082,11 @@ namespace Gauntlet
+         // Rarity colour rather than the module's yellow, for the offer line's
+         // reason: what was just taken is the thing to say most about it.
+         ChatHandler(player->GetSession()).PSendSysMessage(
+-            "|cffff2020[Gauntlet]|r You bear |cff{}{}|r. {}", RarityColor(chosen.rarity), name, describe);
++            "|cffff2020[试炼]|r 你获得了 |cff{}{}|r。{}", RarityColor(chosen.rarity), name, describe);
+ 
+         if (_announce)
+             sWorldSessionMgr->SendServerMessage(SERVER_MSG_STRING,
+-                Acore::StringFormat("[Gauntlet] {} reached tier {} and took {}.",
++                Acore::StringFormat("[试炼] {} 到达第 {} 层并选择了 {}。",
+                                     player->GetName(), st->tier, name));
+         return true;
+     }
+@@ -1154,7 +1160,7 @@ namespace Gauntlet
+ 
+         if (_announce)
+             sWorldSessionMgr->SendServerMessage(SERVER_MSG_STRING,
+-                Acore::StringFormat("[Gauntlet] {} has fallen at level {} on tier {} ({}).",
++                Acore::StringFormat("[试炼] {} 在 {} 级、第 {} 层倒下（{}）。",
+                                     player->GetName(), player->GetLevel(), st->tier, cause));
+     }
+ 
+@@ -2157,7 +2163,7 @@ namespace Gauntlet
+         // affix acted when they die -- cannot be answered with "install the
+         // addon", so the same fact goes out as a chat line.
+         ChatHandler(player->GetSession()).PSendSysMessage(
+-            "|cffff2020[Gauntlet]|r The last affix to act on you was |cffffff00{}|r.", name);
++            "|cffff2020[试炼]|r 最后一个影响你的词缀是 |cffffff00{}|r。", name);
+     }
+ 
+     void Mgr::OnDied(Player* player)
+diff --git a/src/GauntletScripts.cpp b/src/GauntletScripts.cpp
+index a8d73e0..74148bc 100644
+--- a/src/GauntletScripts.cpp
++++ b/src/GauntletScripts.cpp
+@@ -33,7 +33,7 @@ void AddSC_gauntlet_commands();
+ void AddSC_gauntlet_summons();
+ 
+ static char const* GAUNTLET_RETIRED_MSG =
+-    "Your Gauntlet run has ended. This character is retired.";
++    "你的试炼已结束，此角色已退役。";
+ 
+ class GauntletWorldScript : public WorldScript
+ {
+@@ -69,11 +69,11 @@ public:
+         ChatHandler ch(player->GetSession());
+         if (st->dead)
+         {
+-            ch.PSendSysMessage("|cffff2020[Gauntlet]|r {}", GAUNTLET_RETIRED_MSG);
++            ch.PSendSysMessage("|cffff2020[试炼]|r {}", GAUNTLET_RETIRED_MSG);
+             return;
+         }
+ 
+-        ch.PSendSysMessage("|cffff2020[Gauntlet]|r Run seed |cffffff00{}|r - tier {} - {} affix(es) borne.",
++        ch.PSendSysMessage("|cffff2020[试炼]|r 种子 |cffffff00{}|r - 第 {} 层 - 已携带 {} 个词缀。",
+                            st->seed, st->tier, uint32(st->affixes.size()));
+ 
+         // A tier may have been reached while offline, or left unpicked.
+@@ -275,7 +275,7 @@ public:
+             return true;
+ 
+         ChatHandler(player->GetSession()).PSendSysMessage(
+-            "|cffff2020[Gauntlet]|r {}", GAUNTLET_RETIRED_MSG);
++            "|cffff2020[试炼]|r {}", GAUNTLET_RETIRED_MSG);
+         return false;
+     }
+ 
+diff --git a/src/GauntletZhCN.h b/src/GauntletZhCN.h
+new file mode 100644
+index 0000000..bb1ad26
+--- /dev/null
++++ b/src/GauntletZhCN.h
+@@ -0,0 +1,270 @@
++#pragma once
++#include "Gauntlet.h"
++#include <string>
++
++namespace Gauntlet {
++// The reviewed zhCN text from the v16 client support package.
++// IDs are stable protocol values; never reorder them.
++inline char const* ZhMechanicName(uint16 id) {
++    switch (id) {
++    case 1: return "暗影";
++    case 2: return "回响";
++    case 3: return "腐食";
++    case 4: return "增援";
++    case 5: return "伏击";
++    case 6: return "勇士";
++    case 7: return "怯懦";
++    case 8: return "战地召唤";
++    case 9: return "死亡哀鸣";
++    case 10: return "怨灵";
++    case 11: return "迅捷";
++    case 12: return "狡诈";
++    case 13: return "嗅觉敏锐";
++    case 14: return "天崩";
++    case 15: return "狂热";
++    case 16: return "顾此失彼";
++    case 17: return "失手";
++    case 18: return "傲慢";
++    case 19: return "重伤";
++    case 20: return "血魔法";
++    case 23: return "自给自足";
++    case 24: return "独行狼";
++    case 26: return "临终圣礼";
++    case 27: return "诅咒宝库";
++    case 28: return "血雾";
++    case 29: return "狂战士的交易";
++    case 30: return "钢铁纪律";
++    case 31: return "震耳咆哮";
++    case 32: return "漫长自律";
++    case 33: return "奉献之地";
++    case 35: return "誓约";
++    case 36: return "半驯服";
++    case 37: return "沉重负担";
++    case 38: return "扩大盲区";
++    case 39: return "鲜血纽带";
++    case 40: return "冰冷踪迹";
++    case 41: return "淬毒之刃";
++    case 42: return "背部暴露";
++    case 43: return "迟缓之手";
++    case 44: return "脆弱灵魂";
++    case 45: return "无信之形";
++    case 46: return "沉默苦修";
++    case 47: return "深渊低语";
++    case 48: return "符文枯竭";
++    case 49: return "墓穴呼唤";
++    case 50: return "冰冷领域";
++    case 51: return "唯有一盾";
++    case 52: return "唯一图腾";
++    case 53: return "图腾锚点";
++    case 54: return "元素过载";
++    case 55: return "灵魂之债";
++    case 56: return "冰冷之足";
++    case 57: return "善变绵羊";
++    case 58: return "法力燃烧";
++    case 59: return "奥术脆弱";
++    case 60: return "邪能契约";
++    case 61: return "自我折磨";
++    case 62: return "碎片经济";
++    case 63: return "共享鲜血";
++    case 64: return "束缚之皮";
++    case 65: return "自然代价";
++    case 66: return "根须誓约";
++    case 67: return "双面";
++    case 68: return "昏厥";
++    case 70: return "安卡契约";
++    case 71: return "诅咒之石";
++    case 74: return "杀戮之地";
++    case 75: return "无盔";
++    case 76: return "无袍";
++    case 77: return "无戒";
++    case 78: return "无饰品";
++    case 79: return "空颈";
++    case 80: return "无斧";
++    case 81: return "无剑";
++    case 82: return "玻璃";
++    case 83: return "孱弱";
++    case 84: return "稀薄血脉";
++    case 85: return "喜鹊";
++    case 86: return "手滑";
++    case 87: return "夜猫子";
++    case 88: return "食腐之眼";
++    case 89: return "以血为食";
++    case 90: return "物尽其用";
++    case 91: return "日灼";
++    case 92: return "易惊";
++    case 93: return "定身";
++    case 94: return "鞍伤";
++    case 95: return "怯场";
++    case 96: return "深入地底";
++    case 97: return "困兽";
++    case 98: return "腿脚生风";
++    case 99: return "异乡人";
++    case 100: return "无肩";
++    case 101: return "赤足";
++    case 102: return "徒手";
++    case 103: return "无腕";
++    case 104: return "无盾";
++    case 105: return "无锤";
++    case 106: return "无匕";
++    case 107: return "无法杖";
++    case 108: return "被猎";
++    case 109: return "迟钝";
++    case 110: return "新鲜尸体";
++    case 111: return "血之代价";
++    case 112: return "战利品猎人";
++    case 113: return "拾荒";
++    case 114: return "掘墓人";
++    case 115: return "贡品";
++    case 116: return "第十具尸体";
++    case 117: return "精英税赋";
++    default: return nullptr;
++    }
++}
++inline char const* ZhMechanicDescription(uint16 id) {
++    switch (id) {
++    case 1: return "每隔几分钟会有一道暗影在你身后升起并追击你，直到你击杀它或把它甩在身后。";
++    case 2: return "每击杀 25 个敌人，其中一个就会作为你的回响重生。";
++    case 3: return "你每拾取 4 具尸体，就会引来食腐者。";
++    case 4: return "战斗持续超过 30 秒后，每 15 秒都会再引来一个敌人。";
++    case 5: return "在野外休息会招来一场伏击。";
++    case 6: return "你每发起 8 场战斗，就有一场以勇士开场：生命翻倍、攻击更重、奖励翻倍。";
++    case 7: return "敌人会在生命值降至 25% 时逃跑。在它逃回营地前将其斩杀，它的价值翻倍。";
++    case 8: return "击杀敌人会惊动它最近的同类。前来支援的同类价值更高。";
++    case 9: return "尸体在死亡两秒后爆裂，对 5 码内的目标造成伤害。";
++    case 10: return "每具尸体在死亡四秒后都会升起一个怨灵。先拾取尸体就不会有怨灵出现。";
++    case 11: return "敌人的移动速度提高 30%。";
++    case 12: return "近战范围内的敌人会打断你正在施放的法术，每个敌人每 12 秒一次。";
++    case 13: return "敌人能在更远处发现你。";
++    case 14: return "战斗中站定不动，天空就会标记你脚下的地面。保持移动。";
++    case 15: return "每 8 秒内完成一次击杀都会叠加狂热：造成的伤害提高 6%。受到任何伤害都会打断连杀。";
++    case 16: return "从背后攻击你的目标造成的伤害提高 30%。让它们始终待在你的正面。";
++    case 17: return "战斗中每 45 秒，你的双手会有三秒不听使唤。";
++    case 18: return "战斗中的第一个敌人是你的决斗对手：它对你造成的伤害更低，其余敌人造成的伤害更高。";
++    case 19: return "你受到伤害的三分之一会转化为一道伤口。只有击杀才能愈合一道伤口。";
++    case 20: return "施放法术会消耗你 3% 的最大生命值。生命值低于三分之一时，法术不再消耗生命，且威力更强。";
++    case 23: return "你无法交易、邮寄或使用拍卖行。";
++    case 24: return "组队时生命值减半；独处时获得更多经验。";
++    case 26: return "一次本应杀死你的攻击会让你只剩 1 点生命值，每级一次。";
++    case 27: return "宝箱给予双倍拾取，但打开宝箱会使你受到的伤害变为三倍，直到你击杀三个敌人。";
++    case 28: return "怒气达到 100 时你会失去理智三秒，并且怒气会被清空。";
++    case 29: return "生命值低于 35% 时你造成的伤害提高 25%，但你的保命技能将不再响应。";
++    case 30: return "切换姿态有十秒冷却时间。";
++    case 31: return "你的怒吼会惊醒 30 码内的所有敌人。";
++    case 32: return "自律持续三分钟，并且圣盾术会清空你的法力。";
++    case 33: return "当你不站在自己的奉献范围内时，受到的伤害提高 25%。";
++    case 35: return "制裁之锤会在其持续时间内将你定身。";
++    case 36: return "不开心的宠物会转而攻击你。";
++    case 37: return "假死有三分钟冷却时间。";
++    case 38: return "10 码内无法使用远程攻击。";
++    case 39: return "你的宠物受到伤害的五分之一会转移到你身上。";
++    case 40: return "消失有十分钟冷却时间。";
++    case 41: return "你造成的毒素伤害有四分之一也会在你身上持续生效。";
++    case 42: return "从你背后发起的攻击造成的伤害提高 50%。";
++    case 43: return "战斗中移动时能量不会回复。";
++    case 44: return "虚弱灵魂持续 30 秒。";
++    case 45: return "离开暗影形态有三十秒冷却时间。";
++    case 46: return "治疗自己会使你沉默两秒。";
++    case 47: return "生命值低于 20% 时你会失去理智并逃跑三秒，每场战斗一次。";
++    case 48: return "当六个符文全部处于冷却时，你受到的伤害提高 30%。";
++    case 49: return "你未拾取的死者会站起来与你为敌。";
++    case 50: return "切换领域会耗尽你所有符文能量，并有十秒冷却时间。";
++    case 51: return "反魔法护罩与冰封之韧共享冷却时间。";
++    case 52: return "同一时间只能放置一根图腾。";
++    case 53: return "当你距离自己的图腾超过 15 码时，受到的伤害提高 30%。";
++    case 54: return "连续施放同一个法术两次，其消耗加倍。";
++    case 55: return "每次受击都会消耗一层护盾，每消耗一层你损失 2% 生命值。";
++    case 56: return "闪现会消耗你 15% 的最大生命值。";
++    case 57: return "变形术会在五秒后解除，而且变回来的羊会变得愤怒。";
++    case 58: return "你受到伤害的一半也会灼烧你的法力。";
++    case 59: return "生命值降低 30%，法术伤害提高 30%。";
++    case 60: return "你的恶魔每击杀一次，束缚就会松动一分，二十次之后它会转而攻击你。";
++    case 61: return "你的诅咒与腐蚀也会作用于你自己，威力为其五分之一。";
++    case 62: return "每次召唤和每块治疗石都需要消耗一枚灵魂碎片，而碎片只能从你的升级中获得。";
++    case 63: return "你的恶魔存活时，你受到的伤害提高 25%，它造成的伤害提高 40%。";
++    case 64: return "变形有六秒冷却时间。";
++    case 65: return "以野兽形态完成的每次击杀都会使你流血，直到你恢复平静。";
++    case 66: return "缠绕根须束缚你的时间与束缚它们的时间一样长。";
++    case 67: return "白天你的法术更弱；夜晚你的爪牙更弱。";
++    case 68: return "战斗中法力归零时，你会昏迷两秒。";
++    case 70: return "复生在本轮中只能生效一次，且生效时会焚毁你携带的所有恩赐。";
++    case 71: return "灵魂石会让你复活一次，而杀死你的家伙会在那里等着你。";
++    case 74: return "只要被你击伤的目标还活着，你受到的治疗就会被扣留。完成一次击杀即可取回。";
++    case 75: return "你无法佩戴头盔。";
++    case 76: return "你无法佩戴披风。";
++    case 77: return "你无法佩戴戒指。";
++    case 78: return "你无法佩戴饰品。";
++    case 79: return "你的颈部无法佩戴任何物品。";
++    case 80: return "你无法使用斧。";
++    case 81: return "你无法使用剑。";
++    case 82: return "你受到的伤害提高 10%。";
++    case 83: return "你的生命值降低 10%。";
++    case 84: return "你受到的治疗效果降低 15%。";
++    case 85: return "你无法佩戴腰带。";
++    case 86: return "你造成的伤害降低 8%。";
++    case 87: return "夜晚你受到的伤害提高 10%。";
++    case 88: return "敌人能在更远处发现你，而在一场你毫发无伤的战斗中，奖励翻倍。";
++    case 89: return "你无法进食或饮水。取而代之，每次击杀都会为你提供补给。";
++    case 90: return "你无法饮用药水。取而代之，每次击杀都会治疗你。";
++    case 91: return "白天你受到的伤害提高 10%。";
++    case 92: return "移动时你受到的伤害提高 15%。";
++    case 93: return "站立不动时你受到的伤害提高 15%。";
++    case 94: return "骑乘时你受到的伤害提高 25%。";
++    case 95: return "组队时你受到的伤害提高 15%。";
++    case 96: return "在副本中你受到的伤害提高 15%。";
++    case 97: return "生命值低于一半时，你受到的治疗效果降低 25%。";
++    case 98: return "生命值高于一半时，你造成的伤害降低 10%。";
++    case 99: return "在野外世界中，所有追击你的目标速度加快 15%。";
++    case 100: return "你无法佩戴护肩。";
++    case 101: return "你无法穿靴子。";
++    case 102: return "你无法佩戴手套。";
++    case 103: return "你无法佩戴护腕。";
++    case 104: return "你无法携带盾牌。";
++    case 105: return "你无法使用锤。";
++    case 106: return "你无法使用匕首。";
++    case 107: return "你无法使用法杖。";
++    case 108: return "所有追击你的目标速度加快 10%。";
++    case 109: return "你获得的经验减少 15%。";
++    case 110: return "在击杀后八秒内打开的尸体可以拾取两次。超过这个时间，尸体里除了任务物品一无所有。";
++    case 111: return "打开尸体需要消耗生命值。在受伤状态下打开的尸体可以拾取两次。";
++    case 112: return "附近有稀有生物时，所有敌人的攻击都会更重。击杀一只稀有生物会留下一个宝箱并积攒一次重掷。";
++    case 113: return "你受到的伤害提高，而你每拾取一具尸体都会恢复生命值。";
++    case 114: return "你每拾取 8 具尸体，就会有一具重新站起，并归还它此前扣留的东西。";
++    case 115: return "每击杀 25 个敌人都会留下一个宝箱。打开宝箱会引来食腐者。";
++    case 116: return "尸体在第十具之前一无所有。第十具则承载着其他尸体本该掉落的一切。";
++    case 117: return "精英怪攻击更重，并且必定交出它们携带的所有优秀及以上品质的物品。";
++    default: return nullptr;
++    }
++}
++inline char const* ZhConditionName(Condition c) {
++    static constexpr char const* names[] = {
++        "", "鏖战", "躁动", "绝境", "自满", "独行", "相依", "深入",
++        "漫游", "敌强", "争锋", "夜行", "日照", "转瞬", "定身", "鞍伤"
++    };
++    auto const i = static_cast<unsigned>(c);
++    return i < sizeof(names) / sizeof(names[0]) ? names[i] : "";
++}
++inline char const* ZhBoonName(Boon b) {
++    static constexpr char const* names[] = {
++        "", "狂怒", "治愈", "疾步", "启迪", "贪婪", "坚韧",
++        "复苏", "闪避", "无情", "磨砺", "野蛮", "不死", "幸运"
++    };
++    auto const i = static_cast<unsigned>(b);
++    return i < sizeof(names) / sizeof(names[0]) ? names[i] : "";
++}
++inline std::string ZhBoonClause(Boon b, uint8 magnitude) {
++    if (magnitude == 0) return "";
++    char const* benefit = nullptr;
++    switch (b) {
++    case Boon::BonusDamage: benefit = "造成的伤害"; break;
++    case Boon::BonusHealing: benefit = "受到的治疗"; break;
++    case Boon::BonusMoveSpeed: benefit = "移动速度"; break;
++    case Boon::BonusExperience: benefit = "获得的经验"; break;
++    case Boon::BonusMoney: benefit = "拾取的金币"; break;
++    case Boon::BonusMaxHealth: benefit = "最大生命值"; break;
++    case Boon::BonusRegen: benefit = "恢复速度"; break;
++    case Boon::BonusLoot: benefit = "物品掉落几率"; break;
++    default: return "";
++    }
++    return std::string(" 收益：") + benefit + "提高 " + std::to_string(static_cast<unsigned>(magnitude)) + "%。";
++}
++}
+diff --git a/src/mechanics/attrition/BloodMagic.cpp b/src/mechanics/attrition/BloodMagic.cpp
+index c26f79c..8f088c2 100644
+--- a/src/mechanics/attrition/BloodMagic.cpp
++++ b/src/mechanics/attrition/BloodMagic.cpp
+@@ -203,7 +203,7 @@ namespace Gauntlet
+             {
+                 _warned = true;
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Blood Magic: your spells are paid for in blood as well as mana.");
++                    "|cffff2020[试炼]|r 血魔法：施法除了消耗法力，也会消耗生命。");
+             }
+         }
+ 
+diff --git a/src/mechanics/attrition/BloodPrice.cpp b/src/mechanics/attrition/BloodPrice.cpp
+index 928d6ad..9b0f393 100644
+--- a/src/mechanics/attrition/BloodPrice.cpp
++++ b/src/mechanics/attrition/BloodPrice.cpp
+@@ -89,7 +89,7 @@ namespace Gauntlet
+                     ctx.addon->SendEvent(player, MechanicKey(), 0, "Blood Price");
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Bleeding hands find more. This one pays twice.");
++                        "|cffff2020[试炼]|r 鲜血换来更多收获，这具尸体可拾取两次。");
+             }
+ 
+             std::string Describe(AffixInstance const& /*self*/) const override
+diff --git a/src/mechanics/attrition/DeepWounds.cpp b/src/mechanics/attrition/DeepWounds.cpp
+index f1948c7..5b77e73 100644
+--- a/src/mechanics/attrition/DeepWounds.cpp
++++ b/src/mechanics/attrition/DeepWounds.cpp
+@@ -489,14 +489,14 @@ namespace Gauntlet
+                 if (now <= 0)
+                 {
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Your wounds have closed.");
++                        "|cffff2020[试炼]|r 你的伤口已经愈合。");
+                     return;
+                 }
+ 
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+                     nowStep > wasStep
+-                        ? "|cffff2020[Gauntlet]|r Your wounds deepen: {}% of your health is gone until you rest."
+-                        : "|cffff2020[Gauntlet]|r Your wounds are closing: {}% of your health is still gone.",
++                        ? "|cffff2020[试炼]|r 伤口加深：休息前你的生命值减少 {}%。"
++                        : "|cffff2020[试炼]|r 伤口正在愈合：你的生命值仍减少 {}%。",
+                     now);
+             }
+ 
+diff --git a/src/mechanics/attrition/KillingFloor.cpp b/src/mechanics/attrition/KillingFloor.cpp
+index 0664882..7cadc17 100644
+--- a/src/mechanics/attrition/KillingFloor.cpp
++++ b/src/mechanics/attrition/KillingFloor.cpp
+@@ -309,8 +309,7 @@ namespace Gauntlet
+ 
+                 _warned = true;
+                 ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Killing Floor: nothing will heal you until this fight is"
+-                    " finished.");
++                    "|cffff2020[试炼]|r 杀戮场：这场战斗结束前，你无法受到治疗。");
+             }
+ 
+             uint64 _blocked  = 0;
+diff --git a/src/mechanics/attrition/Scavenge.cpp b/src/mechanics/attrition/Scavenge.cpp
+index 2658930..0d80784 100644
+--- a/src/mechanics/attrition/Scavenge.cpp
++++ b/src/mechanics/attrition/Scavenge.cpp
+@@ -77,7 +77,7 @@ namespace Gauntlet
+                 // the player has to be told once why looting is mending them.
+                 if (_looted == 1 && player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Scavenge: the corpse gives something back.");
++                        "|cffff2020[试炼]|r 拾荒：这具尸体让你恢复了部分生命。");
+ 
+                 if (ctx.addon)
+                     ctx.addon->SendEvent(player, MechanicKey(), 0, "Scavenge");
+diff --git a/src/mechanics/bargain/CursedHoard.cpp b/src/mechanics/bargain/CursedHoard.cpp
+index 78bfb21..2469872 100644
+--- a/src/mechanics/bargain/CursedHoard.cpp
++++ b/src/mechanics/bargain/CursedHoard.cpp
+@@ -215,7 +215,7 @@ namespace Gauntlet
+                 return;
+             }
+ 
+-            Lift(ctx, "You broke away. The curse lifts.");
++            Lift(ctx, "你摆脱了诅咒。");
+         }
+ 
+         void CursedHoard::OnLoot(Ctx& ctx, ObjectGuid const& lootGuid, Loot* /*loot*/)
+@@ -259,8 +259,7 @@ namespace Gauntlet
+             {
+                 ChatHandler handler(player->GetSession());
+                 handler.PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r The hoard was cursed. Everything hits you three times"
+-                    " as hard until you have killed {} more.", _debt);
++                    "|cffff2020[试炼]|r 宝库受到诅咒。再击杀 {} 个敌人前，你受到的伤害变为三倍。", _debt);
+             }
+         }
+ 
+@@ -300,7 +299,7 @@ namespace Gauntlet
+ 
+             if (_debt == 0)
+             {
+-                Lift(ctx, "The curse is paid off.");
++                Lift(ctx, "诅咒已经解除。");
+                 return;
+             }
+ 
+@@ -319,7 +318,7 @@ namespace Gauntlet
+ 
+             if (ctx.player && ctx.player->GetSession())
+                 ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                    "|cff20ff20[Gauntlet]|r {}", how);
++                    "|cff20ff20[试炼]|r {}", how);
+         }
+ 
+         void CursedHoard::Save(Ctx& ctx) const
+diff --git a/src/mechanics/bargain/LastRites.cpp b/src/mechanics/bargain/LastRites.cpp
+index 1d6679a..14ce966 100644
+--- a/src/mechanics/bargain/LastRites.cpp
++++ b/src/mechanics/bargain/LastRites.cpp
+@@ -158,7 +158,7 @@ namespace Gauntlet
+ 
+             if (ctx.player && ctx.player->GetSession())
+                 ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                    "|cff20ff20[Gauntlet]|r The Mark of Last Rites fades. You are whole again.");
++                    "|cff20ff20[试炼]|r 临终圣礼的印记消退，你已恢复如初。");
+         }
+ 
+         uint32 LastRites::OnLethal(Ctx& ctx, uint32 damage)
+@@ -198,10 +198,9 @@ namespace Gauntlet
+             {
+                 ChatHandler handler(player->GetSession());
+                 handler.PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r LAST RITES. That blow would have ended the run.");
++                    "|cffff2020[试炼]|r 临终圣礼生效！这一击原本会结束你的试炼。");
+                 handler.PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r You are Marked for ten minutes: you take half again as"
+-                    " much damage and cannot be healed above half. Run.");
++                    "|cffff2020[试炼]|r 十分钟内你受到的伤害提高 50%，且生命值无法被治疗到一半以上。快逃！");
+             }
+ 
+             return left;
+diff --git a/src/mechanics/class/Bargains.cpp b/src/mechanics/class/Bargains.cpp
+index 40affc1..587018b 100644
+--- a/src/mechanics/class/Bargains.cpp
++++ b/src/mechanics/class/Bargains.cpp
+@@ -133,10 +133,9 @@ namespace Gauntlet
+             {
+                 ChatHandler handler(player->GetSession());
+                 handler.PSendSysMessage(
+-                    "|cff20ff20[Gauntlet]|r The Ankh answers. The run continues.");
++                    "|cff20ff20[试炼]|r 复生十字章生效，试炼继续。");
+                 handler.PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r {} of your boons burned away to pay for it. The"
+-                    " curses remain.", burned);
++                    "|cffff2020[试炼]|r 复生消耗了你 {} 项增益，但诅咒仍然存在。", burned);
+             }
+         }
+ 
+@@ -229,7 +228,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cff20ff20[Gauntlet]|r The stone gives you back. Something is waiting.");
++                    "|cff20ff20[试炼]|r 灵魂石让你复生，但有东西正等着你。");
+ 
+             // The price: the rematch. Recorded on every blow rather than on the
+             // killing one, because by the time the player is dead the attacker
+@@ -254,7 +253,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r It followed you back. Win it this time.");
++                    "|cffff2020[试炼]|r 它跟着你回来了。这次击败它。");
+         }
+     }
+ 
+diff --git a/src/mechanics/class/Common.cpp b/src/mechanics/class/Common.cpp
+index adf6743..004e821 100644
+--- a/src/mechanics/class/Common.cpp
++++ b/src/mechanics/class/Common.cpp
+@@ -99,7 +99,7 @@ namespace Gauntlet
+ 
+             if (_control.Tick(player, diffMs) && player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cff20ff20[Gauntlet]|r You come round.");
++                    "|cff20ff20[试炼]|r 你苏醒了。");
+ 
+             if (_cooldownMs != 0)
+                 _cooldownMs = _cooldownMs > diffMs ? _cooldownMs - diffMs : 0;
+@@ -143,7 +143,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Empty. {}.",
++                    "|cffff2020[试炼]|r 空了。{}。",
+                     SelfControl::Describe(SelfControl::Kind::Stun));
+         }
+ 
+diff --git a/src/mechanics/class/DeathKnight.cpp b/src/mechanics/class/DeathKnight.cpp
+index bd57b54..0df6cfa 100644
+--- a/src/mechanics/class/DeathKnight.cpp
++++ b/src/mechanics/class/DeathKnight.cpp
+@@ -290,7 +290,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r One you did not claim has risen.");
++                    "|cffff2020[试炼]|r 一个你没有收割的敌人重新站了起来。");
+         }
+ 
+         void GraveCall::OnSpellCast(Ctx& ctx, Spell* spell)
+@@ -410,7 +410,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r The change costs everything you had stored.");
++                        "|cffff2020[试炼]|r 这次转换耗尽了你储存的一切。");
+             }
+ 
+             std::string Describe(AffixInstance const& /*self*/) const override
+diff --git a/src/mechanics/class/Druid.cpp b/src/mechanics/class/Druid.cpp
+index c5b1776..f09d920 100644
+--- a/src/mechanics/class/Druid.cpp
++++ b/src/mechanics/class/Druid.cpp
+@@ -187,7 +187,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r The kill opens you. Shift out to close it.");
++                        "|cffff2020[试炼]|r 击杀使你的伤口裂开，解除变形才能止血。");
+             }
+ 
+             // Returning to caster form is what stops it, which is the card's
+@@ -202,7 +202,7 @@ namespace Gauntlet
+ 
+                 if (ctx.player && ctx.player->GetSession())
+                     ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                        "|cff20ff20[Gauntlet]|r The bleeding stops.");
++                        "|cff20ff20[试炼]|r 流血停止了。");
+             }
+ 
+             void OnTick(Ctx& ctx, uint32 diffMs) override
+@@ -300,7 +300,7 @@ namespace Gauntlet
+             {
+                 if (_control.Tick(ctx.player, diffMs) && ctx.player && ctx.player->GetSession())
+                     ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                        "|cff20ff20[Gauntlet]|r The roots let you go.");
++                        "|cff20ff20[试炼]|r 根须松开了你。");
+             }
+ 
+             void OnSpellCast(Ctx& ctx, Spell* spell) override
+diff --git a/src/mechanics/class/Hunter.cpp b/src/mechanics/class/Hunter.cpp
+index 3488b04..379aa69 100644
+--- a/src/mechanics/class/Hunter.cpp
++++ b/src/mechanics/class/Hunter.cpp
+@@ -231,7 +231,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Your pet has had enough of you. Feed it next time.");
++                    "|cffff2020[试炼]|r 你的宠物受够了。下次记得喂食。");
+ 
+         }
+ 
+@@ -342,7 +342,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r That was your last one for {} minutes.", ms / 60000);
++                    "|cffff2020[试炼]|r 接下来 {} 分钟内无法再次使用。", ms / 60000);
+         }
+ 
+         std::string DeadWeight::Describe(AffixInstance const& self) const
+@@ -424,7 +424,7 @@ namespace Gauntlet
+                 {
+                     _nagMs = NAG_MS;
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Too close to shoot. Back up, or draw your blade.");
++                        "|cffff2020[试炼]|r 距离太近，无法射击。后退或改用近战武器。");
+                 }
+             }
+ 
+@@ -492,7 +492,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Too close to shoot. Back up, or draw your blade.");
++                    "|cffff2020[试炼]|r 距离太近，无法射击。后退或改用近战武器。");
+         }
+ 
+         std::string WideDeadZone::Describe(AffixInstance const& self) const
+diff --git a/src/mechanics/class/Mage.cpp b/src/mechanics/class/Mage.cpp
+index f448049..ee23a0d 100644
+--- a/src/mechanics/class/Mage.cpp
++++ b/src/mechanics/class/Mage.cpp
+@@ -252,7 +252,7 @@ namespace Gauntlet
+                 {
+                     _warned = true;
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Mana Burn: the blows you take come out of your mana too.");
++                        "|cffff2020[试炼]|r 法力灼烧：你受到的攻击也会消耗法力。");
+                 }
+             }
+ 
+@@ -396,7 +396,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r It wakes up angry.");
++                    "|cffff2020[试炼]|r 它醒来后怒不可遏。");
+         }
+ 
+         // ==================================================================
+diff --git a/src/mechanics/class/Paladin.cpp b/src/mechanics/class/Paladin.cpp
+index 9c7d230..1702619 100644
+--- a/src/mechanics/class/Paladin.cpp
++++ b/src/mechanics/class/Paladin.cpp
+@@ -116,7 +116,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Forbearance will hold for {} minutes.",
++                        "|cffff2020[试炼]|r 自律效果将持续 {} 分钟。",
+                         FORBEARANCE_MS / 60000);
+             }
+ 
+@@ -160,7 +160,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r The Light answers, and takes everything you had.");
++                    "|cffff2020[试炼]|r 圣光回应了你，同时耗尽你所有的法力。");
+         }
+ 
+         std::string LongForbearance::Describe(AffixInstance const& self) const
+@@ -345,7 +345,7 @@ namespace Gauntlet
+             {
+                 if (_control.Tick(ctx.player, diffMs) && ctx.player && ctx.player->GetSession())
+                     ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                        "|cff20ff20[Gauntlet]|r Your feet are yours again.");
++                        "|cff20ff20[试炼]|r 你重新获得行动能力。");
+             }
+ 
+             void OnSpellCast(Ctx& ctx, Spell* spell) override
+@@ -378,7 +378,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Committed: {}. Finish it.",
++                        "|cffff2020[试炼]|r 誓约已定：{}。完成它。",
+                         SelfControl::Describe(SelfControl::Kind::Root));
+             }
+ 
+diff --git a/src/mechanics/class/Priest.cpp b/src/mechanics/class/Priest.cpp
+index 3fda7b7..e9a97fb 100644
+--- a/src/mechanics/class/Priest.cpp
++++ b/src/mechanics/class/Priest.cpp
+@@ -194,7 +194,7 @@ namespace Gauntlet
+ 
+             if (_control.Tick(player, diffMs) && player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cff20ff20[Gauntlet]|r The whispers fade. You have yourself again.");
++                    "|cff20ff20[试炼]|r 低语消退，你恢复了自我。");
+ 
+             if (_spent || _control.Held())
+                 return;
+@@ -214,7 +214,7 @@ namespace Gauntlet
+                 _spent = true;
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cff20ff20[Gauntlet]|r The whispers rise, and Fear Ward holds them off.");
++                        "|cff20ff20[试炼]|r 低语袭来，但防护恐惧结界挡住了它们。");
+                 return;
+             }
+ 
+@@ -228,7 +228,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Whispers of the Deep: {}.",
++                    "|cffff2020[试炼]|r 深渊低语：{}。",
+                     SelfControl::Describe(SelfControl::Kind::Flee));
+         }
+ 
+@@ -340,7 +340,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r The shadow will not have you back for {} seconds.",
++                    "|cffff2020[试炼]|r 接下来 {} 秒内暗影不会再次将你吞没。",
+                     ms / 1000u);
+         }
+ 
+@@ -367,7 +367,7 @@ namespace Gauntlet
+             {
+                 if (_control.Tick(ctx.player, diffMs) && ctx.player && ctx.player->GetSession())
+                     ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                        "|cff20ff20[Gauntlet]|r Your voice returns.");
++                        "|cff20ff20[试炼]|r 你重新获得了施法能力。");
+             }
+ 
+             void OnSpellCast(Ctx& ctx, Spell* spell) override;
+diff --git a/src/mechanics/class/Rogue.cpp b/src/mechanics/class/Rogue.cpp
+index 10ce11f..e67cf04 100644
+--- a/src/mechanics/class/Rogue.cpp
++++ b/src/mechanics/class/Rogue.cpp
+@@ -118,7 +118,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r The trail goes cold. No Vanish for {} minutes.",
++                    "|cffff2020[试炼]|r 踪迹尚未消散，{} 分钟内无法再次消失。",
+                     ms / 60000);
+         }
+ 
+diff --git a/src/mechanics/class/Shaman.cpp b/src/mechanics/class/Shaman.cpp
+index d772863..935372d 100644
+--- a/src/mechanics/class/Shaman.cpp
++++ b/src/mechanics/class/Shaman.cpp
+@@ -179,7 +179,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r The spirits will answer one call at a time.");
++                        "|cffff2020[试炼]|r 元素之灵一次只会回应一个召唤。");
+             }
+ 
+             // Rank II: whatever stands is fragile. Applied every tick because a
+diff --git a/src/mechanics/class/Warlock.cpp b/src/mechanics/class/Warlock.cpp
+index 4015ac0..3a7186d 100644
+--- a/src/mechanics/class/Warlock.cpp
++++ b/src/mechanics/class/Warlock.cpp
+@@ -223,7 +223,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r The binding breaks. It was never loyal.");
++                    "|cffff2020[试炼]|r 束缚断裂，它从未真正忠诚。");
+         }
+ 
+         void FelPact::OnSpellCast(Ctx& ctx, Spell* spell)
+@@ -243,7 +243,7 @@ namespace Gauntlet
+ 
+             if (ctx.player && ctx.player->GetSession())
+                 ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                    "|cff20ff20[Gauntlet]|r The binding is fresh again.");
++                    "|cff20ff20[试炼]|r 束缚已恢复。");
+         }
+ 
+         std::string FelPact::Describe(AffixInstance const& self) const
+diff --git a/src/mechanics/class/Warrior.cpp b/src/mechanics/class/Warrior.cpp
+index 58a1d67..d90c744 100644
+--- a/src/mechanics/class/Warrior.cpp
++++ b/src/mechanics/class/Warrior.cpp
+@@ -169,7 +169,7 @@ namespace Gauntlet
+ 
+             if (_control.Tick(player, diffMs) && player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cff20ff20[Gauntlet]|r The red mist clears.");
++                    "|cff20ff20[试炼]|r 血雾散去了。");
+ 
+             if (_cooldownMs != 0)
+                 _cooldownMs = _cooldownMs > diffMs ? _cooldownMs - diffMs : 0;
+@@ -201,7 +201,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Red Mist: the rage takes you. {}",
++                    "|cffff2020[试炼]|r 血雾：怒气吞噬了你的理智。{}",
+                     SelfControl::Describe(SelfControl::Kind::Confuse));
+         }
+ 
+@@ -338,9 +338,8 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    below ? "|cffff2020[Gauntlet]|r Berserker's Bargain: you hit harder now, and"
+-                            " nothing will save you. Win or leave."
+-                          : "|cff20ff20[Gauntlet]|r Above the line. Your defensives answer again.");
++                    below ? "|cffff2020[试炼]|r 狂战士的交易：你现在造成更高伤害，但保命技能失效。战胜敌人或撤离。"
++                          : "|cff20ff20[试炼]|r 生命值回升，你的保命技能重新可用。");
+         }
+ 
+         void BerserkersBargain::Hold(Player* player)
+@@ -512,8 +511,7 @@ namespace Gauntlet
+                 {
+                     _taughtQuiet = true;
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Your shout carries {} yards, but nothing ordinary and "
+-                        "idle was in range to hear it.", uint32(range));
++                        "|cffff2020[试炼]|r 你的怒吼传到 {} 码外，但范围内没有可被惊动的普通敌人。", uint32(range));
+                 }
+                 return;
+             }
+@@ -523,7 +521,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Your shout carries. {} of them heard it.", woke);
++                    "|cffff2020[试炼]|r 你的怒吼传了出去，{} 个敌人听到了。", woke);
+         }
+ 
+         void DeafeningRoar::OnAuraApplied(Ctx& ctx, Unit* target, Aura* aura)
+diff --git a/src/mechanics/common/SimpleTrade.cpp b/src/mechanics/common/SimpleTrade.cpp
+index 547a840..881430f 100644
+--- a/src/mechanics/common/SimpleTrade.cpp
++++ b/src/mechanics/common/SimpleTrade.cpp
+@@ -6,6 +6,7 @@
+ #include "GauntletMechanic.h"
+ 
+ #include "GauntletRegistry.h"
++#include "GauntletZhCN.h"
+ #include "GauntletTrades.h"
+ #include "../Boons.h"
+ 
+@@ -140,6 +141,8 @@ namespace Gauntlet
+ 
+         char const* SimpleTrade::Name() const
+         {
++            if (char const* translated = ZhMechanicName(_def.id))
++                return translated;
+             MechanicDef const* def = FindMechanic(_def.id);
+             return def ? def->name : "A trade";
+         }
+@@ -181,7 +184,8 @@ namespace Gauntlet
+                 _lastEntry  = proto->ItemId;
+                 _lastToldMs = now;
+                 ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r {} -- {}", Name(), _def.text);
++                    "|cffff2020[试炼]|r {}：{}", Name(),
++                    ZhMechanicDescription(_def.id) ? ZhMechanicDescription(_def.id) : _def.text);
+             }
+ 
+             return false;
+@@ -246,10 +250,9 @@ namespace Gauntlet
+ 
+                 ChatHandler ch(player->GetSession());
+                 if (bagged)
+-                    ch.PSendSysMessage("|cffff2020[Gauntlet]|r {}: your {} goes into your bags.", Name(), name);
++                    ch.PSendSysMessage("|cffff2020[试炼]|r {}：你的 {} 已放入背包。", Name(), name);
+                 else
+-                    ch.PSendSysMessage("|cffff2020[Gauntlet]|r {}: your {} would not fit in your bags and has been "
+-                                       "mailed to you.", Name(), name);
++                    ch.PSendSysMessage("|cffff2020[试炼]|r {}：背包放不下 {}，已邮寄给你。", Name(), name);
+             }
+         }
+ 
+@@ -295,11 +298,11 @@ namespace Gauntlet
+                     {
+                         ChatHandler ch(player->GetSession());
+                         if (res == EQUIP_ERR_NOT_IN_COMBAT)
+-                            ch.PSendSysMessage("|cffff2020[Gauntlet]|r {}: your {} stays in your bags -- it cannot be put "
+-                                               "on in combat.", Name(), item->GetTemplate()->Name1);
++                            ch.PSendSysMessage("|cffff2020[试炼]|r {}：{} 暂留在背包中，战斗中无法装备。",
++                                               Name(), item->GetTemplate()->Name1);
+                         else
+-                            ch.PSendSysMessage("|cffff2020[Gauntlet]|r {}: your {} stays in your bags -- it could not be "
+-                                               "put back on.", Name(), item->GetTemplate()->Name1);
++                            ch.PSendSysMessage("|cffff2020[试炼]|r {}：{} 暂留在背包中，无法重新装备。",
++                                               Name(), item->GetTemplate()->Name1);
+                     }
+                     continue;
+                 }
+diff --git a/src/mechanics/enemy/CallToArms.cpp b/src/mechanics/enemy/CallToArms.cpp
+index 8d14887..ae2b3a3 100644
+--- a/src/mechanics/enemy/CallToArms.cpp
++++ b/src/mechanics/enemy/CallToArms.cpp
+@@ -194,8 +194,8 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    alerted == 1 ? "|cffff2020[Gauntlet]|r The kill is heard. One of its kin answers."
+-                                 : "|cffff2020[Gauntlet]|r The kill is heard. Its kin answer.");
++                    alerted == 1 ? "|cffff2020[试炼]|r 击杀声惊动了附近的同类，一个敌人前来支援。"
++                                 : "|cffff2020[试炼]|r 击杀声惊动了附近的同类，它们前来支援。");
+         }
+ 
+         std::string CallToArms::Describe(AffixInstance const& self) const
+diff --git a/src/mechanics/enemy/Champions.cpp b/src/mechanics/enemy/Champions.cpp
+index bafc260..832b9a7 100644
+--- a/src/mechanics/enemy/Champions.cpp
++++ b/src/mechanics/enemy/Champions.cpp
+@@ -374,7 +374,7 @@ namespace Gauntlet
+             // The chat line is the fallback for a player with no addon, and it
+             // is what design section 4.8 asks for: the affix says that it acted.
+             ChatHandler(ctx.player->GetSession())
+-                .PSendSysMessage("|cffff2020[Gauntlet]|r A Champion rises to meet you.");
++                .PSendSysMessage("|cffff2020[试炼]|r 一名勇士出现，向你发起挑战。");
+         }
+ 
+         void Champions::Restore(Player* owner, Champion& record)
+diff --git a/src/mechanics/enemy/Craven.cpp b/src/mechanics/enemy/Craven.cpp
+index df00407..fb5a20b 100644
+--- a/src/mechanics/enemy/Craven.cpp
++++ b/src/mechanics/enemy/Craven.cpp
+@@ -244,8 +244,8 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r {} breaks and runs.",
+-                    victim->GetNameForLocaleIdx(LOCALE_enUS));
++                    "|cffff2020[试炼]|r {} 惊慌逃跑。",
++                    victim->GetNameForLocaleIdx(player->GetSession()->GetSessionDbLocaleIndex()));
+         }
+ 
+         void Craven::OnTick(Ctx& ctx, uint32 diffMs)
+@@ -329,8 +329,8 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    fetched == 1 ? "|cffff2020[Gauntlet]|r It comes back, and it is not alone."
+-                                 : "|cffff2020[Gauntlet]|r It comes back with company.");
++                    fetched == 1 ? "|cffff2020[试炼]|r 它回来了，还带了帮手。"
++                                 : "|cffff2020[试炼]|r 它带着帮手回来了。");
+         }
+ 
+         std::string Craven::Describe(AffixInstance const& self) const
+@@ -387,7 +387,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r It did not make it home. Its pockets are yours twice over.");
++                    "|cffff2020[试炼]|r 它没能逃回去，你可以拾取双倍战利品。");
+         }
+ 
+     GAUNTLET_MECHANIC(7, Craven);
+diff --git a/src/mechanics/enemy/Cunning.cpp b/src/mechanics/enemy/Cunning.cpp
+index 1bf6500..776cfce 100644
+--- a/src/mechanics/enemy/Cunning.cpp
++++ b/src/mechanics/enemy/Cunning.cpp
+@@ -299,8 +299,8 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r {} cuts your cast short.",
+-                    kicker->GetNameForLocaleIdx(LOCALE_enUS));
++                    "|cffff2020[试炼]|r {} 打断了你的施法。",
++                    kicker->GetNameForLocaleIdx(player->GetSession()->GetSessionDbLocaleIndex()));
+         }
+ 
+         std::string Cunning::Describe(AffixInstance const& self) const
+diff --git a/src/mechanics/enemy/DeathRattle.cpp b/src/mechanics/enemy/DeathRattle.cpp
+index 0e22c05..4f776de 100644
+--- a/src/mechanics/enemy/DeathRattle.cpp
++++ b/src/mechanics/enemy/DeathRattle.cpp
+@@ -344,7 +344,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r The corpse bursts. {} strikes for {}.",
++                    "|cffff2020[试炼]|r 尸体爆裂，{} 造成 {} 点伤害。",
+                     MechanicName(), dealt);
+         }
+ 
+diff --git a/src/mechanics/enemy/Grudge.cpp b/src/mechanics/enemy/Grudge.cpp
+index 7d6c4d4..f43ea58 100644
+--- a/src/mechanics/enemy/Grudge.cpp
++++ b/src/mechanics/enemy/Grudge.cpp
+@@ -217,7 +217,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r You got there first. Nothing rises, and it gives up more.");
++                    "|cffff2020[试炼]|r 你抢先拾取了尸体，怨灵不会出现，还得到了更多战利品。");
+         }
+ 
+         // The summon itself. Everything that decides *whether* a corpse earns
+@@ -368,7 +368,7 @@ namespace Gauntlet
+ 
+             if (inside && player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r You are standing where something died. It is taking it out of you.");
++                    "|cffff2020[试炼]|r 你站在死亡之地，怨灵正在伤害你。");
+         }
+ 
+         std::string Grudge::Describe(AffixInstance const& self) const
+diff --git a/src/mechanics/enemy/KeenNosed.cpp b/src/mechanics/enemy/KeenNosed.cpp
+index 0d1f994..018421b 100644
+--- a/src/mechanics/enemy/KeenNosed.cpp
++++ b/src/mechanics/enemy/KeenNosed.cpp
+@@ -165,7 +165,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r You are scented from further off than you should be.");
++                    "|cffff2020[试炼]|r 敌人从更远处嗅到了你的气味。");
+         }
+ 
+         void KeenNosed::OnLootMoney(Ctx& ctx, Loot* loot)
+diff --git a/src/mechanics/enemy/ScavengersEye.cpp b/src/mechanics/enemy/ScavengersEye.cpp
+index d2469e6..d50b548 100644
+--- a/src/mechanics/enemy/ScavengersEye.cpp
++++ b/src/mechanics/enemy/ScavengersEye.cpp
+@@ -117,7 +117,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Something saw you coming.");
++                        "|cffff2020[试炼]|r 有东西发现你正在接近。");
+             }
+ 
+             // A fight starts clean. `wasOutOfCombat` is what separates a new
+@@ -232,7 +232,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Untouched: this one is worth searching twice.");
++                    "|cffff2020[试炼]|r 它毫发无损，这具尸体值得拾取两次。");
+         }
+     }
+ 
+diff --git a/src/mechanics/enemy/TrophyHunter.cpp b/src/mechanics/enemy/TrophyHunter.cpp
+index 9585768..4fde77f 100644
+--- a/src/mechanics/enemy/TrophyHunter.cpp
++++ b/src/mechanics/enemy/TrophyHunter.cpp
+@@ -99,9 +99,8 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        _near ? "|cffff2020[Gauntlet]|r Something rare is close. Everything hits harder "
+-                                "while it lives."
+-                              : "|cffff2020[Gauntlet]|r The pressure lifts.");
++                        _near ? "|cffff2020[试炼]|r 附近有稀有生物。它存活期间，所有敌人造成的伤害提高。"
++                              : "|cffff2020[试炼]|r 威胁消退了。");
+             }
+ 
+             float DamageTakenMult(Ctx& /*ctx*/, Unit* /*attacker*/, SpellInfo const*) override
+@@ -165,8 +164,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r A trophy. It left something, and the next offer is "
+-                        "yours to reroll.");
++                        "|cffff2020[试炼]|r 你获得一份战利品，也积攒了一次词缀重掷。");
+             }
+ 
+             uint32 _sweepMs = 0;
+diff --git a/src/mechanics/rules/BloodForBread.cpp b/src/mechanics/rules/BloodForBread.cpp
+index 7cb03ee..53e3216 100644
+--- a/src/mechanics/rules/BloodForBread.cpp
++++ b/src/mechanics/rules/BloodForBread.cpp
+@@ -135,8 +135,7 @@ namespace Gauntlet
+                 // the one thing the player needs told is which card did it.
+                 if (_fed == 1 && player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Blood for Bread: the kill feeds you. It is the only "
+-                        "thing that will.");
++                        "|cffff2020[试炼]|r 以血为食：击杀敌人恢复了你；这是你唯一的进食方式。");
+ 
+                 if (ctx.addon)
+                     ctx.addon->SendEvent(player, MechanicKey(), 0, "Blood for Bread");
+@@ -154,7 +153,7 @@ namespace Gauntlet
+                 _lastEntry  = proto->ItemId;
+                 _lastToldMs = now;
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Blood for Bread: you cannot eat or drink. Kill something.");
++                    "|cffff2020[试炼]|r 以血为食：你无法进食或饮水。去击杀敌人。");
+             }
+ 
+             uint32 _refused    = 0;
+diff --git a/src/mechanics/rules/FreshKill.cpp b/src/mechanics/rules/FreshKill.cpp
+index ed66f3a..b509216 100644
+--- a/src/mechanics/rules/FreshKill.cpp
++++ b/src/mechanics/rules/FreshKill.cpp
+@@ -147,7 +147,7 @@ namespace Gauntlet
+                     ctx.addon->SendEvent(player, MechanicKey(), 0, "Fresh Kill");
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Still warm: this one pays twice.");
++                        "|cffff2020[试炼]|r 尸体尚有余温，可拾取两次。");
+                 return;
+             }
+ 
+@@ -164,7 +164,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Too slow. It has nothing left worth taking.");
++                    "|cffff2020[试炼]|r 你来得太晚，尸体已没有值得拾取的东西。");
+         }
+     }
+ 
+diff --git a/src/mechanics/rules/LoneWolf.cpp b/src/mechanics/rules/LoneWolf.cpp
+index efbffa7..a91370d 100644
+--- a/src/mechanics/rules/LoneWolf.cpp
++++ b/src/mechanics/rules/LoneWolf.cpp
+@@ -207,8 +207,8 @@ namespace Gauntlet
+             // under them.
+             if (changed && player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    _grouped ? "|cffff2020[Gauntlet]|r Lone Wolf: in a group your health is halved."
+-                             : "|cffff2020[Gauntlet]|r Lone Wolf: alone again. Your health returns.");
++                    _grouped ? "|cffff2020[试炼]|r 独行狼：组队时你的生命值减半。"
++                             : "|cffff2020[试炼]|r 独行狼：你再次独处，生命值恢复正常。");
+ 
+             (void)wasPublished;
+         }
+diff --git a/src/mechanics/rules/SelfFound.cpp b/src/mechanics/rules/SelfFound.cpp
+index 898a878..4f32151 100644
+--- a/src/mechanics/rules/SelfFound.cpp
++++ b/src/mechanics/rules/SelfFound.cpp
+@@ -41,13 +41,13 @@ namespace Gauntlet
+                 switch (what)
+                 {
+                     case Restricted::Trade:
+-                        line = "Self-found: you cannot trade. What you find is what you get.";
++                        line = "自给自足：你无法交易，只能使用自己找到的物品。";
+                         break;
+                     case Restricted::Mail:
+-                        line = "Self-found: you cannot send mail. What you find is what you get.";
++                        line = "自给自足：你无法寄送邮件，只能使用自己找到的物品。";
+                         break;
+                     case Restricted::AuctionBid:
+-                        line = "Self-found: the auction house is closed to you.";
++                        line = "自给自足：你无法使用拍卖行。";
+                         break;
+                 }
+ 
+@@ -59,7 +59,7 @@ namespace Gauntlet
+                 // that has no visible effect of any other kind.
+                 if (line && ctx.player && ctx.player->GetSession())
+                     ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r {}", line);
++                        "|cffff2020[试炼]|r {}", line);
+ 
+                 ++_refused;
+                 return false;
+diff --git a/src/mechanics/rules/TenthCorpse.cpp b/src/mechanics/rules/TenthCorpse.cpp
+index f1f53e4..508b6e8 100644
+--- a/src/mechanics/rules/TenthCorpse.cpp
++++ b/src/mechanics/rules/TenthCorpse.cpp
+@@ -90,7 +90,7 @@ namespace Gauntlet
+ 
+                     if (player->GetSession())
+                         ChatHandler(player->GetSession()).PSendSysMessage(
+-                            "|cffff2020[Gauntlet]|r Nothing here. {} more.",
++                            "|cffff2020[试炼]|r 这里什么也没有。还需拾取 {} 具尸体。",
+                             Rules::TenthCorpseLeft(opened));
+                     return;
+                 }
+@@ -123,7 +123,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r The tenth. Everything the other nine were keeping.");
++                        "|cffff2020[试炼]|r 这是第十具尸体，前九具扣留的战利品都在这里。");
+             }
+ 
+             std::string Describe(AffixInstance const& /*self*/) const override
+diff --git a/src/mechanics/rules/WasteNot.cpp b/src/mechanics/rules/WasteNot.cpp
+index af6fa6d..381b74b 100644
+--- a/src/mechanics/rules/WasteNot.cpp
++++ b/src/mechanics/rules/WasteNot.cpp
+@@ -98,8 +98,7 @@ namespace Gauntlet
+ 
+                 if (_mended == 1 && player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Waste Not: the kill mends you. There is no bottle "
+-                        "to reach for now.");
++                        "|cffff2020[试炼]|r 物尽其用：击杀敌人恢复了生命，现在无法再依赖药水。");
+ 
+                 if (ctx.addon)
+                     ctx.addon->SendEvent(player, MechanicKey(), 0, "Waste Not");
+@@ -117,7 +116,7 @@ namespace Gauntlet
+                 _lastEntry  = proto->ItemId;
+                 _lastToldMs = now;
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Waste Not: the bottle stays corked. Kill something instead.");
++                    "|cffff2020[试炼]|r 物尽其用：无法使用药水。击杀敌人来恢复生命。");
+             }
+ 
+             uint32 _refused    = 0;
+diff --git a/src/mechanics/spawn/Ambush.cpp b/src/mechanics/spawn/Ambush.cpp
+index 7d8f54c..8699a96 100644
+--- a/src/mechanics/spawn/Ambush.cpp
++++ b/src/mechanics/spawn/Ambush.cpp
+@@ -153,7 +153,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r You take your rest from its body. That is one way to do it.");
++                        "|cffff2020[试炼]|r 你从伏击者身上获得了休息所需的补给。");
+             }
+ 
+         public:
+@@ -276,7 +276,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r You hear footsteps behind you.");
++                    "|cffff2020[试炼]|r 你听见身后传来脚步声。");
+         }
+ 
+         void Ambush::OnEvent(Ctx& ctx, uint32 eventId)
+@@ -334,7 +334,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Something was waiting for you to sit down.");
++                    "|cffff2020[试炼]|r 有东西一直在等你停下休息。");
+         }
+ 
+         std::string Ambush::Describe(AffixInstance const& self) const
+diff --git a/src/mechanics/spawn/Carrion.cpp b/src/mechanics/spawn/Carrion.cpp
+index d0d9868..c5b7cfc 100644
+--- a/src/mechanics/spawn/Carrion.cpp
++++ b/src/mechanics/spawn/Carrion.cpp
+@@ -243,7 +243,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Something has smelled the blood.");
++                    "|cffff2020[试炼]|r 有东西闻到了血腥味。");
+         }
+ 
+         void Carrion::OnEvent(Ctx& ctx, uint32 eventId)
+@@ -310,7 +310,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Scavengers come for the bodies.");
++                    "|cffff2020[试炼]|r 食腐者正向尸体赶来。");
+         }
+ 
+         void Carrion::OnLootMoney(Ctx& ctx, Loot* loot)
+diff --git a/src/mechanics/spawn/Echo.cpp b/src/mechanics/spawn/Echo.cpp
+index b1895d9..531d226 100644
+--- a/src/mechanics/spawn/Echo.cpp
++++ b/src/mechanics/spawn/Echo.cpp
+@@ -119,7 +119,7 @@ namespace Gauntlet
+         {
+             if (!player || !player->GetSession())
+                 return;
+-            ChatHandler(player->GetSession()).PSendSysMessage("|cffff2020[Gauntlet]|r {}", line);
++            ChatHandler(player->GetSession()).PSendSysMessage("|cffff2020[试炼]|r {}", line);
+         }
+ 
+         class Echo final : public IMechanic
+@@ -289,8 +289,8 @@ namespace Gauntlet
+                 return;
+ 
+             AddonFor(ctx)->SendEvent(ctx.player, MechanicKey(), WARN_LEAD_MS / 1000u, "Echo");
+-            Say(ctx.player, "Something of yours is coming loose. An Echo will step out of you in "
+-                            + std::to_string(WARN_LEAD_MS / 1000u) + " seconds.");
++            Say(ctx.player, "你的回响即将脱离身体，将在 "
++                            + std::to_string(WARN_LEAD_MS / 1000u) + " 秒后出现。");
+         }
+ 
+         void Echo::OnEvent(Ctx& ctx, uint32 eventId)
+@@ -377,7 +377,7 @@ namespace Gauntlet
+             addon->SendEvent(player, MechanicKey(), 0, "Echo");
+             addon->SendSummon(player, MechanicKey(), true);
+ 
+-            Say(player, "An Echo of you steps out and turns around.");
++            Say(player, "你的回响现身，并转身与你为敌。");
+         }
+ 
+         // -------------------------------------------------------------------
+@@ -436,7 +436,7 @@ namespace Gauntlet
+ 
+             if (owed == 0)
+             {
+-                Say(player, "The Echo falls silent.");
++                Say(player, "回响消散了。");
+                 return;
+             }
+ 
+@@ -450,8 +450,8 @@ namespace Gauntlet
+             player->GiveXP(owed, nullptr);
+             _paying = false;
+ 
+-            Say(player, "The Echo falls silent, and what it took comes back: "
+-                        + std::to_string(owed) + " experience.");
++            Say(player, "回响消散，归还了此前夺走的 "
++                        + std::to_string(owed) + " 点经验。");
+         }
+ 
+         void Echo::OnXP(Ctx& /*ctx*/, uint32& amount, Unit* victim)
+diff --git a/src/mechanics/spawn/Gravedigger.cpp b/src/mechanics/spawn/Gravedigger.cpp
+index ec2eeaf..03b5b17 100644
+--- a/src/mechanics/spawn/Gravedigger.cpp
++++ b/src/mechanics/spawn/Gravedigger.cpp
+@@ -144,7 +144,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r It gets back up. Whatever it kept is still on it.");
++                    "|cffff2020[试炼]|r 它重新站了起来，扣留的战利品仍在它身上。");
+         }
+ 
+         void Gravedigger::Pay(Ctx& ctx, Creature* killed)
+@@ -179,7 +179,7 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r It was holding out. Search it again.");
++                    "|cffff2020[试炼]|r 它藏着东西，再拾取一次。");
+         }
+     }
+ 
+diff --git a/src/mechanics/spawn/Reinforcements.cpp b/src/mechanics/spawn/Reinforcements.cpp
+index d296015..bb849ae 100644
+--- a/src/mechanics/spawn/Reinforcements.cpp
++++ b/src/mechanics/spawn/Reinforcements.cpp
+@@ -298,7 +298,7 @@ namespace Gauntlet
+ 
+             AddonFor(ctx)->SendEvent(player, MechanicKey(), WARN_MS / 1000u, "Reinforcements");
+             ChatHandler(player->GetSession()).PSendSysMessage(
+-                "|cffff2020[Gauntlet]|r You hear more of them coming.");
++                "|cffff2020[试炼]|r 你听见更多敌人正在赶来。");
+         }
+ 
+         void Reinforcements::OnEvent(Ctx& ctx, uint32 eventId)
+@@ -367,7 +367,7 @@ namespace Gauntlet
+             addon->QueueCounter(player, MechanicKey(), _spawned, CAP);
+ 
+             ChatHandler(player->GetSession()).PSendSysMessage(
+-                "|cffff2020[Gauntlet]|r {} arrives.", copy->GetNameForLocaleIdx(LOCALE_enUS));
++                "|cffff2020[试炼]|r {} 到来了。", copy->GetNameForLocaleIdx(player->GetSession()->GetSessionDbLocaleIndex()));
+         }
+ 
+         std::string Reinforcements::Describe(AffixInstance const& self) const
+diff --git a/src/mechanics/spawn/Shade.cpp b/src/mechanics/spawn/Shade.cpp
+index 25aadfa..b4ea7d9 100644
+--- a/src/mechanics/spawn/Shade.cpp
++++ b/src/mechanics/spawn/Shade.cpp
+@@ -189,7 +189,7 @@ namespace Gauntlet
+         {
+             if (!player || !player->GetSession())
+                 return;
+-            ChatHandler(player->GetSession()).PSendSysMessage("|cffff2020[Gauntlet]|r {}", line);
++            ChatHandler(player->GetSession()).PSendSysMessage("|cffff2020[试炼]|r {}", line);
+         }
+ 
+         // Whether a Shade may rise *now*, and if not, what kind of "not":
+@@ -381,8 +381,8 @@ namespace Gauntlet
+ 
+             // And the same thing for a player with no addon, because the module
+             // has to be playable without one.
+-            Say(ctx.player, label + " will rise behind you in " +
+-                            std::to_string(WARN_LEAD_MS / 1000u) + " seconds.");
++            Say(ctx.player, label + " 将在 " +
++                            std::to_string(WARN_LEAD_MS / 1000u) + " 秒后从你身后出现。");
+         }
+ 
+         void Shade::OnEvent(Ctx& ctx, uint32 eventId)
+@@ -489,7 +489,7 @@ namespace Gauntlet
+             addon->SendEvent(player, MechanicKey(), 0, label);   // secs == 0: it landed
+             addon->SendSummon(player, MechanicKey(), true);
+ 
+-            Say(player, label + " rises behind you.");
++            Say(player, label + " 从你身后出现了。");
+ 
+             // Keep the clock armed even while a hunt runs. Settle() re-arms
+             // from the resolution, which is the cadence that matters, but a
+@@ -556,7 +556,7 @@ namespace Gauntlet
+                 if (IsNemesis(ctx) && ctx.state && ctx.run)
+                 {
+                     ctx.state->Set(KEY_DEAD, int32(ctx.run->tier) + NEMESIS_QUIET_TIERS);
+-                    Say(ctx.player, Label(ctx) + " will not rise again for two tiers.");
++                    Say(ctx.player, Label(ctx) + " 在接下来的两层不会再次出现。");
+                 }
+             }
+             else
+@@ -590,8 +590,8 @@ namespace Gauntlet
+ 
+             AddonFor(ctx)->QueueStat(ctx.player, "vindication", int32(VINDICATION_PCT));
+ 
+-            Say(ctx.player, "Vindication: you gain " + std::to_string(VINDICATION_PCT) +
+-                            "% more experience for five minutes.");
++            Say(ctx.player, "昭雪：获得的经验提高 " + std::to_string(VINDICATION_PCT) +
++                            "%，持续五分钟。");
+         }
+ 
+         void Shade::CountEscape(Ctx& ctx)
+@@ -607,12 +607,12 @@ namespace Gauntlet
+             int32 const step = ctx.state->Get(KEY_RANK, 0);
+             if (step >= NEMESIS_MAX_STEPS)
+             {
+-                Say(ctx.player, Label(ctx) + " is left behind. It is already as strong as it becomes.");
++                Say(ctx.player, Label(ctx) + " 被你甩在身后，它的力量已达到上限。");
+                 return;
+             }
+ 
+             ctx.state->Set(KEY_RANK, step + 1);
+-            Say(ctx.player, Label(ctx) + " is left behind, and will return stronger.");
++            Say(ctx.player, Label(ctx) + " 被你甩在身后，下次回来时会更强。");
+         }
+ 
+         bool Shade::NemesisAsleep(Ctx& ctx) const
+@@ -633,7 +633,7 @@ namespace Gauntlet
+         {
+             if (IsNemesis(ctx) && ctx.run)
+                 return NemesisName(ctx.run->seed);
+-            return "The Shade";
++            return "暗影";
+         }
+ 
+         // -------------------------------------------------------------------
+@@ -648,7 +648,7 @@ namespace Gauntlet
+                 {
+                     _vindicateMs = 0;
+                     AddonFor(ctx)->QueueStat(ctx.player, "vindication", 0);
+-                    Say(ctx.player, "Vindication fades.");
++                    Say(ctx.player, "昭雪效果消退了。");
+                 }
+                 else
+                 {
+diff --git a/src/mechanics/spawn/Tribute.cpp b/src/mechanics/spawn/Tribute.cpp
+index 12e3c80..2a6c8ac 100644
+--- a/src/mechanics/spawn/Tribute.cpp
++++ b/src/mechanics/spawn/Tribute.cpp
+@@ -103,7 +103,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r Something was watching the chest.");
++                        "|cffff2020[试炼]|r 有东西一直在盯着这个宝箱。");
+             }
+ 
+             void OnDetach(Ctx& ctx) override
+@@ -179,7 +179,7 @@ namespace Gauntlet
+ 
+                 if (player->GetSession())
+                     ChatHandler(player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r It left something behind. Opening it will not go unnoticed.");
++                        "|cffff2020[试炼]|r 它留下了东西，但打开宝箱会惊动其他敌人。");
+             }
+ 
+             std::vector<ObjectGuid> _chests;
+diff --git a/src/mechanics/tempo/FallingSky.cpp b/src/mechanics/tempo/FallingSky.cpp
+index a1bd478..e83152a 100644
+--- a/src/mechanics/tempo/FallingSky.cpp
++++ b/src/mechanics/tempo/FallingSky.cpp
+@@ -541,7 +541,7 @@ namespace Gauntlet
+             // who is not running the addon. The name comes from the registry,
+             // so it is the same string the offer and the panel used.
+             ChatHandler(player->GetSession()).PSendSysMessage(
+-                "|cffff2020[Gauntlet]|r The sky falls on you. {} strikes for {}.",
++                "|cffff2020[试炼]|r 天崩落下，{} 造成 {} 点伤害。",
+                 MechanicName(), dealt);
+         }
+ 
+@@ -593,7 +593,7 @@ namespace Gauntlet
+             {
+                 _taughtDodge = true;
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r You are clear when it lands. {} leaves you {}% faster for {} seconds.",
++                    "|cffff2020[试炼]|r 你躲开了落下的攻击，{} 使你的速度提高 {}%，持续 {} 秒。",
+                     MechanicName(), pct, DODGE_SPEED_MS / 1000);
+             }
+         }
+diff --git a/src/mechanics/tempo/Falter.cpp b/src/mechanics/tempo/Falter.cpp
+index 2661b95..f211b7c 100644
+--- a/src/mechanics/tempo/Falter.cpp
++++ b/src/mechanics/tempo/Falter.cpp
+@@ -272,8 +272,8 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    Silenced(player) ? "|cffff2020[Gauntlet]|r Your voice is about to fail you."
+-                                     : "|cffff2020[Gauntlet]|r Your grip is about to fail you.");
++                    Silenced(player) ? "|cffff2020[试炼]|r 你的声音即将被封住。"
++                                     : "|cffff2020[试炼]|r 你即将握不住武器。");
+         }
+ 
+         void Falter::OnEvent(Ctx& ctx, uint32 eventId)
+@@ -356,8 +356,8 @@ namespace Gauntlet
+ 
+             if (player->GetSession())
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    silence ? "|cffff2020[Gauntlet]|r You are silenced for {} seconds."
+-                            : "|cffff2020[Gauntlet]|r You are disarmed for {} seconds.",
++                    silence ? "|cffff2020[试炼]|r 你被沉默 {} 秒。"
++                            : "|cffff2020[试炼]|r 你被缴械 {} 秒。",
+                     ms / 1000u);
+         }
+ 
+diff --git a/src/mechanics/tempo/Frenzy.cpp b/src/mechanics/tempo/Frenzy.cpp
+index 13d8551..061675c 100644
+--- a/src/mechanics/tempo/Frenzy.cpp
++++ b/src/mechanics/tempo/Frenzy.cpp
+@@ -96,7 +96,7 @@ namespace Gauntlet
+ 
+                 if (ctx.player && ctx.player->GetSession())
+                     ChatHandler(ctx.player->GetSession()).PSendSysMessage(
+-                        "|cffff2020[Gauntlet]|r The chain breaks.");
++                        "|cffff2020[试炼]|r 连杀中断了。");
+             }
+ 
+             // The boon half. It is a Mult callback and not AggregateFactor
+@@ -214,12 +214,12 @@ namespace Gauntlet
+             if (_stacks == MAX_STACKS && _lastAnnounced != MAX_STACKS)
+             {
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Frenzy at five: you deal and take much more damage until the killing stops.");
++                    "|cffff2020[试炼]|r 狂热叠至五层：连杀停止前，你造成和受到的伤害大幅提高。");
+             }
+             else if (_stacks == 0 && _lastAnnounced == MAX_STACKS)
+             {
+                 ChatHandler(player->GetSession()).PSendSysMessage(
+-                    "|cffff2020[Gauntlet]|r Frenzy fades.");
++                    "|cffff2020[试炼]|r 狂热消退了。");
+             }
+ 
+             _lastAnnounced = _stacks;
