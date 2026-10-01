@@ -1,0 +1,191 @@
+diff --git a/conf/mod_gauntlet.conf.dist b/conf/mod_gauntlet.conf.dist
+index 7cd8183..c85290d 100644
+--- a/conf/mod_gauntlet.conf.dist
++++ b/conf/mod_gauntlet.conf.dist
+@@ -20,6 +20,51 @@ Gauntlet.Enable = 1
+ 
+ Gauntlet.Hardcore = 1
+ 
++#
++#    Gauntlet.Hardcore.CapGrace
++#        Description: Suspend the one-life rule while a character is parked on
++#                     an unbroken level wall: level 60 before Individual
++#                     Progression's PROGRESSION_PRE_TBC, level 70 before
++#                     PROGRESSION_TBC_TIER_5.
++#
++#                     The condition is the progression module's own experience
++#                     wall (IndividualProgressionPlayer.cpp, "do not give XP past
++#                     level 60" / "past level 70"), copied rather than
++#                     approximated, so the window in which a level cannot be
++#                     gained is exactly the window in which a run cannot be lost.
++#                     Breaking the wall restores hardcore with no command, no
++#                     relog and no restart.
++#
++#                     Nothing else changes: affixes keep ticking, tiers keep
++#                     landing, deaths are still recorded and announced. Only the
++#                     arming of the death window is skipped, and the player is
++#                     told so on login and on the death itself.
++#
++#                     Set to 0 on a realm without mod-individual-progression, or
++#                     with it disabled: nothing would ever reward the unlock
++#                     quests, so the walls would read as unbroken forever and
++#                     hardcore would never arm above level 60.
++#        Default:     1 - (grace at an unbroken 60/70 wall)
++#                     0 - (hardcore from level 1, the original behaviour)
++
++Gauntlet.Hardcore.CapGrace = 1
++
++#
++#    Gauntlet.Hardcore.Wall1 / Wall2
++#        Description: The two walls the grace watches: a level, plus the
++#                     progression state that lifts it. State N is carried by the
++#                     rewarded hidden quest ProgressionQuestBase + N, which is
++#                     the only place Individual Progression keeps a character's
++#                     progression. Change these only if that module renumbers
++#                     its states or moves a cap.
++#        Default:     base 66000; wall 1 = 60 at state 8; wall 2 = 70 at state 13
++
++Gauntlet.Hardcore.ProgressionQuestBase   = 66000
++Gauntlet.Hardcore.Wall1.Level            = 60
++Gauntlet.Hardcore.Wall1.UnlockState      = 8
++Gauntlet.Hardcore.Wall2.Level            = 70
++Gauntlet.Hardcore.Wall2.UnlockState      = 13
++
+ #
+ #    Gauntlet.TierInterval
+ #        Description: Levels between affix tiers. With 1, a tier lands at every
+diff --git a/src/GauntletMgr.cpp b/src/GauntletMgr.cpp
+index 2ee0687..b917255 100644
+--- a/src/GauntletMgr.cpp
++++ b/src/GauntletMgr.cpp
+@@ -331,6 +331,17 @@ namespace Gauntlet
+         }
+ 
+         sGauntletSummons->LoadConfig();
++
++        // The one-life rule's own gate (Gauntlet.Hardcore.CapGrace). Read here,
++        // in the function `.reload config` runs, and not at the death path,
++        // because a wall has to be movable without a restart -- the same
++        // argument the clamps above are read under.
++        _capGrace             = sConfigMgr->GetOption<bool>("Gauntlet.Hardcore.CapGrace", true);
++        _progressionQuestBase = sConfigMgr->GetOption<uint32>("Gauntlet.Hardcore.ProgressionQuestBase", 66000);
++        _wall1Level           = sConfigMgr->GetOption<uint32>("Gauntlet.Hardcore.Wall1.Level", 60);
++        _wall1UnlockState     = sConfigMgr->GetOption<uint32>("Gauntlet.Hardcore.Wall1.UnlockState", 8);
++        _wall2Level           = sConfigMgr->GetOption<uint32>("Gauntlet.Hardcore.Wall2.Level", 70);
++        _wall2UnlockState     = sConfigMgr->GetOption<uint32>("Gauntlet.Hardcore.Wall2.UnlockState", 13);
+     }
+ 
+     bool Mgr::IsEligible(Player* player) const
+diff --git a/src/GauntletMgr.h b/src/GauntletMgr.h
+index 7ad2c36..8dae118 100644
+--- a/src/GauntletMgr.h
++++ b/src/GauntletMgr.h
+@@ -322,6 +322,44 @@ namespace Gauntlet
+         uint32 Choices() const   { return _choices; }
+         bool   Hardcore() const  { return _hardcore; }
+ 
++        // The question the death path actually asks: hardcore, minus the levels
++        // at which a character is parked on a wall it has not broken yet.
++        //
++        // The condition is copied from the experience wall in
++        // mod-individual-progression (IndividualProgressionPlayer.cpp, "do not
++        // give XP past level 60" gated on PROGRESSION_PRE_TBC, "past level 70"
++        // gated on PROGRESSION_TBC_TIER_5). Mirroring it on purpose, and not
++        // merely similar to it, is the point: the window in which a level
++        // cannot be gained is then exactly the window in which a run cannot be
++        // lost, and the two cannot drift apart because a wall moved on one side
++        // only.
++        //
++        // Progression lives nowhere but the rewarded hidden quests 66000 + state
++        // (IndividualProgression::GetPlayerProgressionFromQuests), so this reads
++        // quest status through the core's own API and never links against the
++        // progression module -- the same reason the addon channel carries IDs
++        // and not pointers.
++        bool HardcoreFor(Player* player) const
++        {
++            if (!_hardcore)
++                return false;
++
++            if (!_capGrace || !player)
++                return true;
++
++            // 60 wall: no way to level, so no way to finish the run's tiers.
++            if (!player->GetQuestRewardStatus(_progressionQuestBase + _wall1UnlockState) &&
++                player->GetLevel() >= _wall1Level)
++                return false;
++
++            // 70 wall: same argument, one expansion later.
++            if (!player->GetQuestRewardStatus(_progressionQuestBase + _wall2UnlockState) &&
++                player->GetLevel() >= _wall2Level)
++                return false;
++
++            return true;
++        }
++
+         // What the offer builder is allowed to draw from on this realm, ready
+         // to hand to BuildOffers. Public so that .gauntlet debug offers shows
+         // the same set of families the player would actually be offered.
+@@ -403,6 +441,18 @@ namespace Gauntlet
+         bool   _playersOnly = true;
+         uint32 _graceMs  = 60000;
+ 
++        // Gauntlet.Hardcore.CapGrace and the two walls it watches, as data
++        // rather than as the constants the mirror above was written from. A
++        // realm that moves a wall -- or one whose progression module numbers its
++        // states differently -- moves a number in the conf file, not a line in
++        // the death path.
++        bool   _capGrace             = true;
++        uint32 _progressionQuestBase = 66000;
++        uint32 _wall1Level           = 60;
++        uint32 _wall1UnlockState     = 8;
++        uint32 _wall2Level           = 70;
++        uint32 _wall2UnlockState     = 13;
++
+         // The hardcore death window. It reads Gauntlet.Grace.Seconds like
+         // _graceMs does, because plan section 6 decision 5 names the same sixty
+         // seconds and there is no key of its own -- but it is a separate field
+diff --git a/src/GauntletScripts.cpp b/src/GauntletScripts.cpp
+index 74148bc..7103e9f 100644
+--- a/src/GauntletScripts.cpp
++++ b/src/GauntletScripts.cpp
+@@ -83,6 +83,14 @@ public:
+             sGauntlet->OfferTier(player, st->tier + 1);
+             sGauntletAddon->SendOffers(player);
+         }
++
++        // The stake is not always on, so say when it is not. A player parked at
++        // 60 for a week should not have to die to discover which rule was in
++        // force over the week.
++        if (sGauntlet->Hardcore() && !sGauntlet->HardcoreFor(player))
++            ch.PSendSysMessage("|cffffd200[试炼]|r 未破限保护期：{} 级上限尚未打破，"
++                               "期间死亡不终止试炼；破限后一命规则自动恢复。",
++                               player->GetLevel());
+     }
+ 
+     // The core reuses the GUIDs of deleted characters, so a run keyed on the
+@@ -185,8 +193,24 @@ public:
+         // which are owed whether or not the realm is hardcore.
+         sGauntlet->OnDied(player);
+ 
+-        if (sGauntlet->Hardcore())
++        // The gate. A character parked on an unbroken 60/70 wall is not hardcore
++        // for as long as it is parked there: the experience wall upstream leaves
++        // it no level to reach and therefore no tier to earn, and a run that
++        // cannot advance is not one a player should be able to lose. Everything
++        // above still happens -- KILLBY is recorded, the queue is emptied, the
++        // state is written -- because none of that depends on the stake.
++        if (sGauntlet->HardcoreFor(player))
++        {
+             sGauntlet->BeginPendingDeath(player);
++        }
++        else if (sGauntlet->Hardcore())
++        {
++            // Said out loud, for the same reason the tier offers are: a rule
++            // that silently does nothing looks exactly like a rule that fired.
++            ChatHandler(player->GetSession()).PSendSysMessage(
++                "|cffffd200[试炼]|r 未破限保护期：本次死亡不终止试炼。"
++                "打破当前等级上限后，一命规则自动恢复。");
++        }
+     }
+ 
+     void OnPlayerReleasedGhost(Player* player) override
