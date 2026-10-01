@@ -38,6 +38,13 @@ mod-city-siege|https://github.com/DustinHendrickson/mod-city-siege.git|main|0
 #          遗留宏，声明被预处理成 `bool = false;` → C2513 + 连带语法错误。补丁：改名 closeEnough。
 # 补丁文件名约定：ci/patches/<模块目录名>__<描述>.patch，由 workflow 在 clone 之后、build 之前
 # 用 `git apply --ignore-whitespace` 应用；应用失败会直接 fail 构建（不会静默放过）。
+# 同一模块有多个补丁时，**按文件名字典序**依次应用，因此后改的补丁必须排在后：
+#   mod-gauntlet__hardcore-unbroken-cap-grace.patch  (h)
+#   mod-gauntlet__no-bot-api-and-near-macro.patch    (n)
+#   mod-gauntlet__zhcn.patch                         (z)
+#   mod-gauntlet__zz-classmask-relax.patch           (zz，故排最后)
+# zz- 那个补丁改在 hardcore 补丁新增代码的紧邻上下文里（GauntletMgr.h 的 HardcoreFor 附近），
+# 所以它**不能**单独打在上游原始态上；改名前先确认它仍排在最后。
 mod-solo-raids|https://github.com/TheTollski/mod-solo-raids.git|master|1
 mod-gauntlet|https://github.com/ngc7052/mod-gauntlet.git|master|1
 # mod-ale = AzerothCore Lua Engine (ALE)。AC 的 modules/CMakeLists.txt 对其有专门分支(MOD_ALE_FOUND)：
