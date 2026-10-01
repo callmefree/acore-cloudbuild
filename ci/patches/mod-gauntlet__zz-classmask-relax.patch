@@ -1,0 +1,224 @@
+diff --git a/conf/mod_gauntlet.conf.dist b/conf/mod_gauntlet.conf.dist
+index 7b6e1f3..88ca50a 100644
+--- a/conf/mod_gauntlet.conf.dist
++++ b/conf/mod_gauntlet.conf.dist
+@@ -105,6 +105,48 @@ Gauntlet.Announce = 1
+ 
+ Gauntlet.PlayersOnly = 1
+ 
++#
++#    Gauntlet.ClassMask.Extra
++#        Description: Class bits, in the core's 1 << (class - 1) convention,
++#                     OR'd into every character's offer mask. A MechanicDef
++#                     carries a class mask, and the offer filter drops every
++#                     row whose mask does not intersect the character's class
++#                     -- so on a classless realm, where every character is one
++#                     base class but learns the other classes' abilities, the
++#                     whole Family::Class band is unreachable forever.
++#                     Widening the mask lets those rows be offered. Nothing
++#                     else changes: the character's class, the talent-tree
++#                     encoding and the core's own class checks all still read
++#                     Gauntlet's GetClass() and see the base class.
++#                     1535 is 1|2|4|8|16|32|64|128|256|1024 -- all ten real
++#                     class bits, which offers every class curse.
++#                     See Gauntlet.ClassMask.GatedOnly for the cost of that.
++#        Default:     0 - (stock: only the character's own class)
++#                     1535 - every class curse becomes offerable
++#
++
++Gauntlet.ClassMask.Extra = 0
++
++#
++#    Gauntlet.ClassMask.GatedOnly
++#        Description: Only meaningful while Gauntlet.ClassMask.Extra is not 0.
++#                     A class curse that names no gate of its own pays its boon
++#                     and never lands its curse on a character of another
++#                     class: "at 100 rage you lose your mind" is free to a
++#                     class with no rage, "only one totem may stand" is free to
++#                     a class with no totems. With this on, the widened mask
++#                     reaches only rows that declare requiresSpell or
++#                     requiresTree, and requiresSpell is then tested against
++#                     the abilities the character has actually learned -- so a
++#                     classless character is offered exactly the class curses
++#                     their kit can answer. Off, the widened mask means what
++#                     it says and every ungated class curse is a free boon.
++#        Default:     0 - the widened mask reaches every class row
++#                     1 - only rows that carry a gate of their own
++#
++
++Gauntlet.ClassMask.GatedOnly = 0
++
+ #
+ #    Gauntlet.Family.Spawn.Enable
+ #        Description: Master switch for the Spawn family: mechanics that spawn
+diff --git a/src/Gauntlet.h b/src/Gauntlet.h
+index 6bbe18e..f951685 100644
+--- a/src/Gauntlet.h
++++ b/src/Gauntlet.h
+@@ -546,8 +546,30 @@ namespace Gauntlet
+         // untalented character satisfies no gate.
+         virtual uint8  GetTalentTree() const = 0;
+ 
+-        // 1 << (class - 1), the core's getClassMask() convention.
+-        uint32 GetClassMask() const { return 1u << (GetClass() - 1); }
++        // 1 << (class - 1), the core's getClassMask() convention. This is the
++        // mask the offer filter tests a MechanicDef::classMask against, and it
++        // is virtual because a realm may widen it: on a classless build every
++        // character is one base class while learning every other class's
++        // abilities, so no character ever satisfies a class curse's mask and
++        // the whole Family::Class band is unreachable. Widening this -- and
++        // nothing else -- lets those rows be offered without changing the
++        // class the character is, which is what the addon header, the talent
++        // encoding and the core's own class checks all still read.
++        virtual uint32 GetClassMask() const { return 1u << (GetClass() - 1); }
++
++        // The mask for the class the character actually is, which is
++        // GetClassMask() unless a realm widened it. A row that only matches
++        // through the widening is one the server cannot show bites this
++        // character; see RelaxedNeedsGate.
++        virtual uint32 GetOwnClassMask() const { return 1u << (GetClass() - 1); }
++
++        // True when a widened offer mask may reach only rows that carry a gate
++        // of their own (requiresSpell or requiresTree). A class curse with no
++        // such gate -- "at 100 rage you lose your mind", aimed at a warrior --
++        // is a card that pays its boon and never charges for it on a character
++        // of another class, so a realm that widens the mask for reach rather
++        // than for difficulty turns this on. Gauntlet.ClassMask.GatedOnly.
++        virtual bool RelaxedNeedsGate() const { return false; }
+     };
+ 
+     std::string FamilyName(Family f);
+diff --git a/src/GauntletGenerator.cpp b/src/GauntletGenerator.cpp
+index 60b4ac6..91db763 100644
+--- a/src/GauntletGenerator.cpp
++++ b/src/GauntletGenerator.cpp
+@@ -315,8 +315,24 @@ namespace
+ 
+     bool RelevantTo(MechanicDef const& def, IPlayerView const& view)
+     {
+-        if (def.classMask != 0 && (def.classMask & view.GetClassMask()) == 0)
+-            return false;
++        if (def.classMask != 0)
++        {
++            if ((def.classMask & view.GetClassMask()) == 0)
++                return false;
++
++            // The row matched only because the realm widened the offer mask
++            // past the class the character is (Gauntlet.ClassMask.Extra). A
++            // widened row that names no gate of its own pays its boon and
++            // cannot land its curse -- "at 100 rage you lose your mind" on a
++            // character with no rage -- so a realm that widens for reach
++            // rather than for difficulty asks for the gate instead, and
++            // requiresSpell below then tests the ability the character has
++            // actually learned. Gauntlet.ClassMask.GatedOnly.
++            if (view.RelaxedNeedsGate() &&
++                (def.classMask & view.GetOwnClassMask()) == 0 &&
++                def.requiresSpell == 0 && def.requiresTree == 0)
++                return false;
++        }
+         if (def.requiresSpell != 0 && !view.HasSpell(def.requiresSpell))
+             return false;
+         if (def.requiresTree != 0 && def.requiresTree != view.GetTalentTree())
+diff --git a/src/GauntletMgr.cpp b/src/GauntletMgr.cpp
+index 8805cac..b6057d1 100644
+--- a/src/GauntletMgr.cpp
++++ b/src/GauntletMgr.cpp
+@@ -210,6 +210,21 @@ namespace Gauntlet
+         return &inst;
+     }
+ 
++    // The two halves of Gauntlet.ClassMask.*, on the one view every caller
++    // shares -- the offer builder in GauntletMgr and the debug commands in
++    // GauntletCommands. They are defined here, and not inline in the header,
++    // because reading the settings needs Mgr::instance() and Mgr is declared
++    // after LivePlayerView.
++    uint32 LivePlayerView::GetClassMask() const
++    {
++        return IPlayerView::GetOwnClassMask() | Mgr::instance()->ClassMaskExtra();
++    }
++
++    bool LivePlayerView::RelaxedNeedsGate() const
++    {
++        return Mgr::instance()->ClassMaskGatedOnly();
++    }
++
+     void Mgr::LoadConfig()
+     {
+         _enabled  = sConfigMgr->GetOption<bool>("Gauntlet.Enable", true);
+@@ -219,6 +234,29 @@ namespace Gauntlet
+         _announce = sConfigMgr->GetOption<bool>("Gauntlet.Announce", true);
+         _playersOnly = sConfigMgr->GetOption<bool>("Gauntlet.PlayersOnly", true);
+ 
++        // Gauntlet.ClassMask.Extra widens every character's offer mask by the
++        // class bits it names, in the core's 1 << (class - 1) convention.
++        // The case it exists for is a classless realm: every character is one
++        // base class while learning the other classes' abilities, so no
++        // character ever satisfies a class curse's mask and Family::Class is
++        // filtered out of every offer, permanently. 1535 is the union of the
++        // ten real class bits (1|2|4|8|16|32|64|128|256|1024) -- all of them.
++        //
++        // This changes the filter and nothing else. GetClass() still answers
++        // the base class, so the addon header, the talent encoding and every
++        // core class check see the character they saw before.
++        _classMaskExtra = sConfigMgr->GetOption<uint32>("Gauntlet.ClassMask.Extra", 0);
++
++        // A row that only matches through the widening, and that carries no
++        // gate of its own, cannot be shown to bite the character at all: "at
++        // 100 rage you lose your mind" pays its boon to a class with no rage
++        // and never charges for it. With this on, the widened mask reaches
++        // only rows that name a spell or a talent tree, which requiresSpell
++        // then tests against the character's own spell book -- so a classless
++        // character is offered exactly the curses whose abilities they have
++        // actually learned. Off, the mask means what it says.
++        _classMaskGatedOnly = sConfigMgr->GetOption<bool>("Gauntlet.ClassMask.GatedOnly", false);
++
+         // Plan section 2.5's clamps, overridable per realm. Gauntlet.Caps.* is
+         // the conf worker's naming; the defaults here repeat the ones in
+         // conf/mod_gauntlet.conf.dist so a realm with no config file still
+diff --git a/src/GauntletMgr.h b/src/GauntletMgr.h
+index 1abb3fc..6c7bfc6 100644
+--- a/src/GauntletMgr.h
++++ b/src/GauntletMgr.h
+@@ -41,6 +41,13 @@ namespace Gauntlet
+         uint8 GetLevel() const override { return _player->GetLevel(); }
+         bool  HasSpell(uint32 spellId) const override { return _player->HasSpell(spellId); }
+ 
++        // Widened by Gauntlet.ClassMask.Extra, which is 0 on a stock realm so
++        // this is the character's own class bit and nothing more. Defined in
++        // GauntletMgr.cpp because reading the setting needs Mgr::instance(),
++        // which is declared after this class.
++        uint32 GetClassMask() const override;
++        bool   RelaxedNeedsGate() const override;
++
+         // tabpage + 1, with 0 reserved for "no spec yet"; see the comment on
+         // IPlayerView::GetTalentTree. Player::GetMostPointsTalentTree cannot
+         // express that distinction on its own -- it returns 0 both for the
+@@ -322,6 +329,14 @@ namespace Gauntlet
+         uint32 Choices() const   { return _choices; }
+         bool   Hardcore() const  { return _hardcore; }
+ 
++        // Gauntlet.ClassMask.Extra: class bits OR'd into every character's
++        // offer mask, so a class curse whose mask names a class the character
++        // is not can still be offered. 0 on a stock realm. See
++        // IPlayerView::GetClassMask and IPlayerView::RelaxedNeedsGate, which
++        // are the only two readers.
++        uint32 ClassMaskExtra() const { return _classMaskExtra; }
++        bool   ClassMaskGatedOnly() const { return _classMaskGatedOnly; }
++
+         // The question the death path actually asks: hardcore, minus the levels
+         // at which a character is parked on a wall it has not broken yet.
+         //
+@@ -453,6 +468,13 @@ namespace Gauntlet
+         uint32 _wall2Level           = 70;
+         uint32 _wall2UnlockState     = 13;
+ 
++        // Gauntlet.ClassMask.Extra and Gauntlet.ClassMask.GatedOnly. Both
++        // default to the stock behaviour -- no widening, and therefore nothing
++        // for the gate rule to refuse -- so a realm with no conf file is
++        // unaffected by their existence.
++        uint32 _classMaskExtra     = 0;
++        bool   _classMaskGatedOnly = false;
++
+         // The hardcore death window. It reads Gauntlet.Grace.Seconds like
+         // _graceMs does, because plan section 6 decision 5 names the same sixty
+         // seconds and there is no key of its own -- but it is a separate field
