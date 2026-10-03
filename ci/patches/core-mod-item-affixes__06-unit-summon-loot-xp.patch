@@ -1,0 +1,22 @@
+diff --git a/src/server/game/Entities/Unit/Unit.cpp b/src/server/game/Entities/Unit/Unit.cpp
+index 58da7ed..e41b684 100644
+--- a/src/server/game/Entities/Unit/Unit.cpp
++++ b/src/server/game/Entities/Unit/Unit.cpp
+@@ -1215,7 +1215,7 @@ uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage
+         {
+             uint32 unDamage = health < damage ? health : damage;
+             bool damagedByPlayer = unDamage && attacker && (attacker->IsPlayer() || attacker->m_movedByPlayer != nullptr
+-                || attacker->GetCharmerGUID().IsPlayer());
++                || attacker->GetCharmerGUID().IsPlayer() || attacker->GetOwnerGUID().IsPlayer());
+ 
+             uint8 attackerLevel = 0;
+             if (damagedByPlayer)
+@@ -11230,7 +11230,7 @@ void Unit::AtTargetAttacked(Unit* target, bool canInitialAggro)
+     // Patch 3.0.8: All player spells which cause a creature to become aggressive
+     // to you will now also immediately cause the creature to be tapped.
+     if (Creature* creature = target->ToCreature())
+-        if (!creature->hasLootRecipient() && IsPlayer())
++        if (!creature->hasLootRecipient() && (IsPlayer() || IsControlledByPlayer()))
+             creature->SetLootRecipient(this);
+ 
+     Player* myPlayerOwner = GetCharmerOrOwnerPlayerOrPlayerItself();
