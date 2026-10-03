@@ -227,6 +227,27 @@ jobs:
           echo "---- modules/ ----"
           ls -1 modules
 
+      - name: Apply module core patches
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ac  = Join-Path $env:GITHUB_WORKSPACE 'ac'
+          $mod = Join-Path $ac 'modules'
+          if (-not (Test-Path $mod)) { throw "modules dir not found: $mod" }
+          $applied = 0
+          Get-ChildItem -Path $mod -Directory | Sort-Object Name | ForEach-Object {
+            $s = Join-Path $_.FullName 'scripts\apply_core_patches.ps1'
+            if (Test-Path $s) {
+              Write-Host ("==> apply core patches for " + $_.Name)
+              & powershell -NoProfile -ExecutionPolicy Bypass -File $s -AzerothCoreRoot $ac
+              if ($LASTEXITCODE -ne 0) { throw ("apply_core_patches.ps1 FAILED for " + $_.Name + " (exit " + $LASTEXITCODE + ")") }
+              $applied++
+            } else {
+              Write-Host ("    no core patch script: " + $_.Name)
+            }
+          }
+          Write-Host ("core patches applied for " + $applied + " module(s)")
+
       - name: Build
         shell: bash
         run: |
