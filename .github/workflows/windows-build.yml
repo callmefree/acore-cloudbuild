@@ -78,7 +78,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: azerothcore/azerothcore-wotlk
-          ref: master
+          ref: 3d28fa72d742dff9cee084c7b7a41500d2a5537f   # pinned dev: rev the item-affixes core patches were verified against
           path: ac
 
       - name: Record AC commit
@@ -226,6 +226,18 @@ jobs:
           done < "$MODULES_LIST"
           echo "---- modules/ ----"
           ls -1 modules
+
+      - name: Apply core patches (mod-item-affixes)
+        working-directory: ac
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCHDIR="$(cd ../buildrepo/ci/patches && pwd)"
+          shopt -s nullglob
+          for p in "$PATCHDIR"/core-mod-item-affixes__*.patch; do
+            echo "CORE PATCH $(basename "$p")"
+            git apply -p1 --ignore-whitespace --whitespace=nowarn "$p"
+          done
 
       - name: Build
         shell: bash
