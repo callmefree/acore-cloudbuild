@@ -1,0 +1,19 @@
+diff --git a/src/server/game/Scripting/ScriptDefines/PlayerScript.cpp b/src/server/game/Scripting/ScriptDefines/PlayerScript.cpp
+index 4ac4571..7c49d62 100644
+--- a/src/server/game/Scripting/ScriptDefines/PlayerScript.cpp
++++ b/src/server/game/Scripting/ScriptDefines/PlayerScript.cpp
+@@ -1015,4 +1015,14 @@ PlayerScript::PlayerScript(char const* name, std::vector<uint16> enabledHooks)
+     ScriptRegistry<PlayerScript>::AddScript(this, std::move(enabledHooks));
+ }
+ 
++void ScriptMgr::OnPlayerSocketGem(Player* player, Item* item, Item* gem, uint8 slot)
++{
++    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_SOCKET_GEM, script->OnPlayerSocketGem(player, item, gem, slot));
++}
++
++void ScriptMgr::OnPlayerBeforeQuestReward(Player* player, Quest const* quest)
++{
++    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_BEFORE_QUEST_REWARD, script->OnPlayerBeforeQuestReward(player, quest));
++}
++
+ template class AC_GAME_API ScriptRegistry<PlayerScript>;
