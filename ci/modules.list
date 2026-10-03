@@ -81,3 +81,11 @@ mod-stellar-tarot|https://github.com/Adrestie/mod-stellar-tarot.git|main|0
 # mod-limit-break     Adrestie/mod-limit-break         仅规格文档、无代码，不参与编译
 # mod-artifact-weapons Adrestie/mod-artifact-weapons   未启用，不参与编译
 # WoW-mods-workbench  Adrestie/WoW-mods-workbench      上游重组后的工具仓，不参与编译
+
+# --- [D] 2026-10-03 dev: dungeon-master + item-affixes ----------------------
+# mod-dungeon-master: 零内核补丁探路件 (NPC 500000/500001, world+characters SQL)
+# mod-item-affixes:   需 8 处内核补丁, 见 ci/patches/core-mod-item-affixes__*.patch
+#   (workflow 的 'Apply core patches' 步骤对内核源码按字典序应用;
+#    补丁在 pin 的 rev 上 git apply --check 全 CLEAN)
+mod-dungeon-master|https://github.com/trauntrow/mod-dungeon-master.git|main|1
+mod-item-affixes|https://github.com/Nevaden/mod-item-affixes.git|main|1
