@@ -1,0 +1,16 @@
+diff --git a/src/server/game/Entities/Player/PlayerQuest.cpp b/src/server/game/Entities/Player/PlayerQuest.cpp
+index c36b855..572878b 100644
+--- a/src/server/game/Entities/Player/PlayerQuest.cpp
++++ b/src/server/game/Entities/Player/PlayerQuest.cpp
+@@ -678,6 +678,11 @@ void Player::RewardQuest(Quest const* quest, uint32 reward, Object* questGiver,
+     //should work fine, cause far teleport will be executed in Player::Update()
+     SetMustDelayTeleport(true);
+ 
++    // Fires before any reward item is stored, so a module's own
++    // OnPlayerStoreNewItem/OnPlayerAfterStoreOrEquipNewItem handler can tell
++    // a quest-reward item apart from any other newly-stored item.
++    sScriptMgr->OnPlayerBeforeQuestReward(this, quest);
++
+     uint32 quest_id = quest->GetQuestId();
+ 
+     for (uint8 i = 0; i < QUEST_ITEM_OBJECTIVES_COUNT; ++i)
