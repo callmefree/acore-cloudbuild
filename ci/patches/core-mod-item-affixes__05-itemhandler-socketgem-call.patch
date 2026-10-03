@@ -1,0 +1,15 @@
+diff --git a/src/server/game/Handlers/ItemHandler.cpp b/src/server/game/Handlers/ItemHandler.cpp
+index 93430db..a1dfc4a 100644
+--- a/src/server/game/Handlers/ItemHandler.cpp
++++ b/src/server/game/Handlers/ItemHandler.cpp
+@@ -1377,7 +1377,10 @@ void WorldSession::HandleSocketOpcode(WorldPackets::Item::SocketGems& packet)
+         {
+             itemTarget->SetEnchantment(EnchantmentSlot(SOCK_ENCHANTMENT_SLOT + i), GemEnchants[i], 0, 0, _player->GetGUID());
+             if (Item* guidItem = _player->GetItemByGuid(packet.GemGuids[i]))
++            {
++                sScriptMgr->OnPlayerSocketGem(_player, itemTarget, guidItem, i);
+                 _player->DestroyItem(guidItem->GetBagSlot(), guidItem->GetSlot(), true);
++            }
+         }
+     }
+ 
