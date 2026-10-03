@@ -1,0 +1,29 @@
+diff --git a/src/server/game/Scripting/ScriptDefines/PlayerScript.h b/src/server/game/Scripting/ScriptDefines/PlayerScript.h
+index 0d2314e..8d53094 100644
+--- a/src/server/game/Scripting/ScriptDefines/PlayerScript.h
++++ b/src/server/game/Scripting/ScriptDefines/PlayerScript.h
+@@ -106,6 +106,8 @@ enum PlayerHook
+     PLAYERHOOK_ON_AFTER_MOVE_ITEM_TO_INVENTORY,
+     PLAYERHOOK_ON_EQUIP,
+     PLAYERHOOK_ON_UNEQUIP_ITEM,
++    PLAYERHOOK_ON_SOCKET_GEM,
++    PLAYERHOOK_ON_BEFORE_QUEST_REWARD,
+     PLAYERHOOK_ON_PLAYER_JOIN_BG,
+     PLAYERHOOK_ON_PLAYER_JOIN_ARENA,
+     PLAYERHOOK_GET_CUSTOM_GET_ARENA_TEAM_ID,
+@@ -445,6 +447,15 @@ public:
+     // After an item has been unequipped
+     virtual void OnPlayerUnequip(Player* /*player*/, Item* /*it*/) { }
+ 
++    // After a gem is socketed into an item (before the gem item is destroyed)
++    virtual void OnPlayerSocketGem(Player* /*player*/, Item* /*item*/, Item* /*gem*/, uint8 /*slot*/) { }
++
++    // Just before RewardQuest stores any reward item(s) -- fires once per quest
++    // turn-in, before both reward-item loops run. Lets a module distinguish a
++    // quest-reward item from any other newly-stored item at the point its own
++    // OnPlayerStoreNewItem/OnPlayerAfterStoreOrEquipNewItem hook fires for it.
++    virtual void OnPlayerBeforeQuestReward(Player* /*player*/, Quest const* /*quest*/) { }
++
+     // After player enters queue for BG
+     virtual void OnPlayerJoinBG(Player* /*player*/) { }
+ 
