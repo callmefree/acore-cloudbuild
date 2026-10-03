@@ -1,0 +1,20 @@
+diff --git a/src/server/game/Handlers/ChatHandler.cpp b/src/server/game/Handlers/ChatHandler.cpp
+index 8adb051..575c9ad 100644
+--- a/src/server/game/Handlers/ChatHandler.cpp
++++ b/src/server/game/Handlers/ChatHandler.cpp
+@@ -363,6 +363,15 @@ void WorldSession::HandleMessagechatOpcode(WorldPacket& recvData)
+ 
+     sScriptMgr->OnPlayerBeforeSendChatMessage(_player, type, lang, msg);
+ 
++    // Some modules (e.g. mod-item-affixes) use type=0 + lang=LANG_ADDON as a
++    // "message handled, suppress delivery" sentinel via OnPlayerBeforeSendChatMessage.
++    // Catch it here rather than falling through to the switch's default case, which
++    // would otherwise log a spurious "unknown message type" error every time.
++    if (type == 0 && lang == LANG_ADDON)
++    {
++        return;
++    }
++
+     switch (type)
+     {
+         case CHAT_MSG_SAY:
