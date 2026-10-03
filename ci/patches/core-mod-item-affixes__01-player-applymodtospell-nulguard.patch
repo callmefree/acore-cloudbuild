@@ -1,0 +1,22 @@
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 6049b56..113edba 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -10245,12 +10245,13 @@ void Player::ApplyModToSpell(SpellModifier* mod, Spell* spell)
+     if (!spell)
+         return;
+ 
+-    // don't do anything with no charges
+-    if (mod->ownerAura->IsUsingCharges() && !mod->ownerAura->GetCharges())
++    // don't do anything with no charges (ownerAura is null for item-affix mods - skip charge logic)
++    if (mod->ownerAura && mod->ownerAura->IsUsingCharges() && !mod->ownerAura->GetCharges())
+         return;
+ 
+-    // register inside spell, proc system uses this to drop charges
+-    spell->m_appliedMods.insert(mod->ownerAura);
++    // register inside spell, proc system uses this to drop charges; skip if no ownerAura (item-affix mods have none)
++    if (mod->ownerAura)
++        spell->m_appliedMods.insert(mod->ownerAura);
+ }
+ 
+ bool Player::HasSpellModApplied(SpellModifier* mod, Spell* spell)
