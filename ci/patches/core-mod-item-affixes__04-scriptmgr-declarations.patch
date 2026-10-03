@@ -1,0 +1,13 @@
+diff --git a/src/server/game/Scripting/ScriptMgr.h b/src/server/game/Scripting/ScriptMgr.h
+index 7f0f30d..ffc22dd 100644
+--- a/src/server/game/Scripting/ScriptMgr.h
++++ b/src/server/game/Scripting/ScriptMgr.h
+@@ -362,6 +362,8 @@ public: /* PlayerScript */
+     void OnPlayerAfterMoveItemToInventory(Player* player, Item* it, bool update);
+     void OnPlayerEquip(Player* player, Item* it, uint8 bag, uint8 slot, bool update);
+     void OnPlayerUnequip(Player* player, Item* it);
++    void OnPlayerSocketGem(Player* player, Item* item, Item* gem, uint8 slot);
++    void OnPlayerBeforeQuestReward(Player* player, Quest const* quest);
+     void OnPlayerJoinBG(Player* player);
+     void OnPlayerJoinArena(Player* player);
+     void OnPlayerGetMaxPersonalArenaRatingRequirement(Player const* player, uint32 minSlot, uint32& maxArenaRating) const;
