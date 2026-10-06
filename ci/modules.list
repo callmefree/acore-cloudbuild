@@ -69,13 +69,13 @@ mod-individual-progression|https://github.com/ZhengPeiRu21/mod-individual-progre
 #   沿用旧目录名 Attriboost 会去找 AddAttriboostScripts() → LNK2019 链接失败。
 #   目录名虽变，conf 文件名不变，仍是 configs/modules/attriboost.conf（installer.json 亦如此声明）。
 mod-attriboost|https://github.com/Adrestie/mod-attriboost.git|main|1
-mod-item-upgrade|https://github.com/callmefree/mod-item-upgrade.git|main|1
-# 2026-10-03 新增：GauntletMods 两个模块（含中文补丁 ci/patches/<dir>__zhcn.patch）
-mod-dungeon-master|https://github.com/trauntrow/mod-dungeon-master.git|main|1
-mod-item-affixes|https://github.com/Nevaden/mod-item-affixes.git|main|1
+mod-item-upgrade|https://github.com/Adrestie/mod-item-upgrade.git|main|1
 #
-# --- [C] 首轮不编 ------------------------------------------------------------
-mod-spheregrid|https://github.com/Adrestie/mod-spheregrid.git|main|0
+# --- [C] 暂缓/试用 ------------------------------------------------------------
+# mod-spheregrid：2026-10-06 经本地审计（ID 零冲突、无跨模块耦合、掉落为追加式）后
+#   改为 1 做初次云编译试编，验证能否在 AC master 上干净编译。部署前仍须走 §3–§4 关服/备份/重启。
+#   若构建失败（如上游 API 漂移），改回 0 即可。
+mod-spheregrid|https://github.com/Adrestie/mod-spheregrid.git|main|1
 mod-stellar-tarot|https://github.com/Adrestie/mod-stellar-tarot.git|main|0
 #
 # --- 非编译项（记录用途，workflow 会忽略，因为没有生效的模块目录语义） ---------
