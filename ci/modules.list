@@ -77,6 +77,11 @@ mod-item-upgrade|https://github.com/Adrestie/mod-item-upgrade.git|main|1
 #   若构建失败（如上游 API 漂移），改回 0 即可。
 mod-spheregrid|https://github.com/Adrestie/mod-spheregrid.git|main|1
 mod-stellar-tarot|https://github.com/Adrestie/mod-stellar-tarot.git|main|0
+
+# --- [D] 2026-10-06 main: dungeon-master (roguelike dungeon runner) ---------
+# mod-dungeon-master: 内置随机词缀地心探索 (NPC 500000/500001, world+characters SQL)
+#   客户端补丁: ci/patches/mod-dungeon-master__zhcn.patch (自动应用)
+mod-dungeon-master|https://github.com/trauntrow/mod-dungeon-master.git|main|1
 #
 # --- 非编译项（记录用途，workflow 会忽略，因为没有生效的模块目录语义） ---------
 # WotLKItemGenerator  STRHercules/WotLKItemGenerator   Tauri 桌面工具，离线产出 SQL/DBC，不参与编译
