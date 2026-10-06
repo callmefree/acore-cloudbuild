@@ -69,7 +69,7 @@ mod-individual-progression|https://github.com/ZhengPeiRu21/mod-individual-progre
 #   沿用旧目录名 Attriboost 会去找 AddAttriboostScripts() → LNK2019 链接失败。
 #   目录名虽变，conf 文件名不变，仍是 configs/modules/attriboost.conf（installer.json 亦如此声明）。
 mod-attriboost|https://github.com/Adrestie/mod-attriboost.git|main|1
-mod-item-upgrade|https://github.com/Adrestie/mod-item-upgrade.git|main|1
+mod-item-upgrade|https://github.com/callmefree/mod-item-upgrade.git|main|1
 # 2026-10-03 新增：GauntletMods 两个模块（含中文补丁 ci/patches/<dir>__zhcn.patch）
 mod-dungeon-master|https://github.com/trauntrow/mod-dungeon-master.git|main|1
 mod-item-affixes|https://github.com/Nevaden/mod-item-affixes.git|main|1
