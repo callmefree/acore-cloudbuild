@@ -2,10 +2,11 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index a10227c..15c42f9 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -10,3 +10,12 @@
+@@ -9,3 +9,12 @@ set_property(
+ set_property(
    GLOBAL APPEND PROPERTY ACORE_MODULE_TEST_INCLUDES
    "${CMAKE_CURRENT_LIST_DIR}/src")
- 
++
 +# --- zhcn: 源码内含 UTF-8 中文字串，必须让 MSVC 按 UTF-8 解析源文件与执行字符集 ---
 +if(MSVC)
 +  add_compile_options(/utf-8)
@@ -14,12 +15,11 @@ index a10227c..15c42f9 100644
 +    set_source_files_properties(${_zhcn_srcs} PROPERTIES COMPILE_OPTIONS "/utf-8")
 +  endif()
 +endif()
-+
 diff --git a/data/sql/db-world/base/dm_setup.sql b/data/sql/db-world/base/dm_setup.sql
 index ab2b4c8..871090c 100644
 --- a/data/sql/db-world/base/dm_setup.sql
 +++ b/data/sql/db-world/base/dm_setup.sql
-@@ -44,7 +44,7 @@
+@@ -44,7 +44,7 @@ INSERT INTO `creature_template` (
      `ScriptName`
  ) VALUES (
      500000,
@@ -32,7 +32,7 @@ diff --git a/src/DMConfig.cpp b/src/DMConfig.cpp
 index 23aa04a..30e3260 100644
 --- a/src/DMConfig.cpp
 +++ b/src/DMConfig.cpp
-@@ -241,53 +241,53 @@
+@@ -241,53 +241,53 @@ void DMConfig::LoadDungeons()
      static const Def kDungeons[] =
      {
          // Classic
@@ -131,7 +131,7 @@ index 23aa04a..30e3260 100644
      };
  
      for (const auto& d : kDungeons)
-@@ -412,18 +412,18 @@
+@@ -412,18 +412,18 @@ void DMConfig::LoadRoguelikeBuffPool()
          LOG_INFO("module", "DungeonMaster: No roguelike buffs configured — using defaults.");
  
          // World buffs (Classic — stack with everything, universally applicable)
@@ -163,7 +163,7 @@ diff --git a/src/DungeonMasterMgr.cpp b/src/DungeonMasterMgr.cpp
 index 4b410da..57ac9d5 100644
 --- a/src/DungeonMasterMgr.cpp
 +++ b/src/DungeonMasterMgr.cpp
-@@ -777,8 +777,8 @@
+@@ -777,8 +777,8 @@ bool DungeonMasterMgr::TeleportPartyIn(Session* session)
                  p->GetName(), session->MapId, ent.GetPositionX(), ent.GetPositionY(), ent.GetPositionZ());
              char buf[256];
              snprintf(buf, sizeof(buf),
@@ -174,7 +174,7 @@ index 4b410da..57ac9d5 100644
                  dg->Name.c_str());
              ChatHandler(p->GetSession()).SendSysMessage(buf);
  
-@@ -787,7 +787,7 @@
+@@ -787,7 +787,7 @@ bool DungeonMasterMgr::TeleportPartyIn(Session* session)
                  std::string affixNames = sRoguelikeMgr->GetActiveAffixNames(session->RoguelikeRunId);
                  char affixBuf[512];
                  snprintf(affixBuf, sizeof(affixBuf),
@@ -183,7 +183,7 @@ index 4b410da..57ac9d5 100644
                  ChatHandler(p->GetSession()).SendSysMessage(affixBuf);
              }
          }
-@@ -796,7 +796,7 @@
+@@ -796,7 +796,7 @@ bool DungeonMasterMgr::TeleportPartyIn(Session* session)
              LOG_ERROR("module", "DungeonMaster: TeleportTo FAILED for {} → map {} ({:.1f}, {:.1f}, {:.1f})",
                  p->GetName(), session->MapId, ent.GetPositionX(), ent.GetPositionY(), ent.GetPositionZ());
              ChatHandler(p->GetSession()).SendSysMessage(
@@ -192,7 +192,7 @@ index 4b410da..57ac9d5 100644
          }
      }
  
-@@ -909,7 +909,7 @@
+@@ -909,7 +909,7 @@ std::vector<SpawnPoint> DungeonMasterMgr::GetSpawnPointsForMap(uint32 mapId)
  
          if (!bosses.empty())
          {
@@ -201,7 +201,7 @@ index 4b410da..57ac9d5 100644
              std::sort(bosses.begin(), bosses.end(),
                  [](const BossCandidate& a, const BossCandidate& b)
                  { return a.dist > b.dist; });
-@@ -1394,7 +1394,7 @@
+@@ -1394,7 +1394,7 @@ void DungeonMasterMgr::PopulateDungeon(Session* session, InstanceMap* map)
                          if (Player* p = ObjectAccessor::FindPlayer(pd.PlayerGuid))
                              if (p->GetSession())
                                  ChatHandler(p->GetSession()).SendSysMessage(
@@ -210,7 +210,7 @@ index 4b410da..57ac9d5 100644
  
                      LOG_INFO("module", "DungeonMaster: Rare creature spawned — entry {} at ({:.1f}, {:.1f}, {:.1f})",
                          rareEntry, rareSP.Pos.GetPositionX(), rareSP.Pos.GetPositionY(), rareSP.Pos.GetPositionZ());
-@@ -1739,7 +1739,7 @@
+@@ -1739,7 +1739,7 @@ void DungeonMasterMgr::HandleBossDeath(Session* session)
              {
                  char buf[128];
                  snprintf(buf, sizeof(buf),
@@ -219,7 +219,7 @@ index 4b410da..57ac9d5 100644
                      session->TotalBosses - session->BossesKilled);
                  ChatHandler(p->GetSession()).SendSysMessage(buf);
              }
-@@ -1862,7 +1862,7 @@
+@@ -1862,7 +1862,7 @@ void DungeonMasterMgr::HandlePlayerDeath(Player* player, Session* session)
              if (!p->IsAlive()) { p->ResurrectPlayer(1.0f); p->SpawnCorpseBones(); }
              if (p->GetSession())
                  ChatHandler(p->GetSession()).SendSysMessage(
@@ -228,7 +228,7 @@ index 4b410da..57ac9d5 100644
              p->TeleportTo(psd.ReturnMapId, psd.ReturnPosition.GetPositionX(),
                  psd.ReturnPosition.GetPositionY(), psd.ReturnPosition.GetPositionZ(),
                  psd.ReturnPosition.GetOrientation());
-@@ -1872,8 +1872,8 @@
+@@ -1872,8 +1872,8 @@ void DungeonMasterMgr::HandlePlayerDeath(Player* player, Session* session)
      {
          if (player->GetSession())
              ChatHandler(player->GetSession()).SendSysMessage(
@@ -239,7 +239,7 @@ index 4b410da..57ac9d5 100644
      }
  }
  
-@@ -1953,7 +1953,7 @@
+@@ -1953,7 +1953,7 @@ void DungeonMasterMgr::GiveGoldReward(Player* player, uint32 amount)
      {
          char buf[128];
          snprintf(buf, sizeof(buf),
@@ -248,7 +248,7 @@ index 4b410da..57ac9d5 100644
              amount / 10000, (amount % 10000) / 100, amount % 100);
          ChatHandler(player->GetSession()).SendSysMessage(buf);
      }
-@@ -1981,7 +1981,7 @@
+@@ -1981,7 +1981,7 @@ void DungeonMasterMgr::GiveItemReward(Player* player, uint8 level, uint8 quality
              player->GetName(), level, playerClass, quality, _rewardItems.size());
          if (player->GetSession())
              ChatHandler(player->GetSession()).SendSysMessage(
@@ -257,7 +257,7 @@ index 4b410da..57ac9d5 100644
          return;
      }
  
-@@ -2000,7 +2000,7 @@
+@@ -2000,7 +2000,7 @@ void DungeonMasterMgr::GiveItemReward(Player* player, uint8 level, uint8 quality
                  {
                      char buf[256];
                      snprintf(buf, sizeof(buf),
@@ -266,7 +266,7 @@ index 4b410da..57ac9d5 100644
                      ChatHandler(player->GetSession()).SendSysMessage(buf);
                  }
              }
-@@ -2013,7 +2013,7 @@
+@@ -2013,7 +2013,7 @@ void DungeonMasterMgr::GiveItemReward(Player* player, uint8 level, uint8 quality
          if (mailItem)
          {
              CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
@@ -275,7 +275,7 @@ index 4b410da..57ac9d5 100644
                  .AddItem(mailItem)
                  .SendMailTo(trans,
                      MailReceiver(player, player->GetGUID().GetCounter()),
-@@ -2021,7 +2021,7 @@
+@@ -2021,7 +2021,7 @@ void DungeonMasterMgr::GiveItemReward(Player* player, uint8 level, uint8 quality
              CharacterDatabase.CommitTransaction(trans);
              if (player->GetSession())
                  ChatHandler(player->GetSession()).SendSysMessage(
@@ -284,7 +284,7 @@ index 4b410da..57ac9d5 100644
          }
          else
          {
-@@ -2095,7 +2095,7 @@
+@@ -2095,7 +2095,7 @@ void DungeonMasterMgr::MailItemReward(Player* player, uint8 level, uint8 quality
              {
                  char buf[256];
                  snprintf(buf, sizeof(buf),
@@ -293,7 +293,7 @@ index 4b410da..57ac9d5 100644
                  ChatHandler(player->GetSession()).SendSysMessage(buf);
              }
          }
-@@ -2163,7 +2163,7 @@
+@@ -2163,7 +2163,7 @@ void DungeonMasterMgr::DistributeRoguelikeRewards(uint32 tier, uint8 effectiveLe
  
          if (p->GetSession())
              ChatHandler(p->GetSession()).SendSysMessage(
@@ -302,7 +302,7 @@ index 4b410da..57ac9d5 100644
      }
  }
  
-@@ -2614,8 +2614,8 @@
+@@ -2614,8 +2614,8 @@ void DungeonMasterMgr::EndSession(uint32 sessionId, bool success)
          if (Player* p = ObjectAccessor::FindPlayer(pd.PlayerGuid))
              if (p->GetSession())
                  ChatHandler(p->GetSession()).SendSysMessage(
@@ -313,7 +313,7 @@ index 4b410da..57ac9d5 100644
  
      if (success && s.State == SessionState::Completed)
          DistributeRewards(&s);
-@@ -3334,7 +3334,7 @@
+@@ -3334,7 +3334,7 @@ void DungeonMasterMgr::Update(uint32 diff)
                                  for (const auto& pd2 : session.Players)
                                      if (Player* p2 = ObjectAccessor::FindPlayer(pd2.PlayerGuid))
                                          ChatHandler(p2->GetSession()).SendSysMessage(
@@ -322,7 +322,7 @@ index 4b410da..57ac9d5 100644
  
                                  PopulateDungeon(&session, inst);
  
-@@ -3344,9 +3344,9 @@
+@@ -3344,9 +3344,9 @@ void DungeonMasterMgr::Update(uint32 diff)
  
                                  char buf[256];
                                  snprintf(buf, sizeof(buf),
@@ -335,7 +335,7 @@ index 4b410da..57ac9d5 100644
                                      session.TotalMobs, session.TotalBosses,
                                      session.LevelBandMin, session.LevelBandMax);
                                  for (const auto& pd2 : session.Players)
-@@ -3473,7 +3473,7 @@
+@@ -3473,7 +3473,7 @@ void DungeonMasterMgr::Update(uint32 diff)
                                      if (Player* p3 = ObjectAccessor::FindPlayer(pd3.PlayerGuid))
                                          if (p3->GetSession())
                                              ChatHandler(p3->GetSession()).SendSysMessage(
@@ -344,7 +344,7 @@ index 4b410da..57ac9d5 100644
                                  break;  // Only promote one phase creature per check
                              }
                          }
-@@ -3506,10 +3506,10 @@
+@@ -3506,10 +3506,10 @@ void DungeonMasterMgr::Update(uint32 diff)
                                          {
                                              char buf[256];
                                              snprintf(buf, sizeof(buf),
@@ -358,7 +358,7 @@ index 4b410da..57ac9d5 100644
                                                  delay);
                                              ChatHandler(p->GetSession()).SendSysMessage(buf);
                                          }
-@@ -3573,7 +3573,7 @@
+@@ -3573,7 +3573,7 @@ void DungeonMasterMgr::Update(uint32 diff)
                                  session.EntrancePos.GetPositionZ(),
                                  session.EntrancePos.GetOrientation());
                              ChatHandler(p->GetSession()).SendSysMessage(
@@ -367,7 +367,7 @@ index 4b410da..57ac9d5 100644
                          }
                      }
                  }
-@@ -3590,7 +3590,7 @@
+@@ -3590,7 +3590,7 @@ void DungeonMasterMgr::Update(uint32 diff)
                      for (const auto& pd : session.Players)
                          if (Player* p = ObjectAccessor::FindPlayer(pd.PlayerGuid))
                              ChatHandler(p->GetSession()).SendSysMessage(
@@ -376,7 +376,7 @@ index 4b410da..57ac9d5 100644
                      continue;
                  }
              }
-@@ -3614,7 +3614,7 @@
+@@ -3614,7 +3614,7 @@ void DungeonMasterMgr::Update(uint32 diff)
                          {
                              char cbuf[128];
                              snprintf(cbuf, sizeof(cbuf),
@@ -385,7 +385,7 @@ index 4b410da..57ac9d5 100644
                                  remaining, remaining != 1 ? "s" : "");
                              for (const auto& pd3 : session.Players)
                                  if (Player* p3 = ObjectAccessor::FindPlayer(pd3.PlayerGuid))
-@@ -3690,7 +3690,7 @@
+@@ -3690,7 +3690,7 @@ void DungeonMasterMgr::Update(uint32 diff)
  
  std::string DungeonMasterMgr::GetSessionStatusString(const Session* s) const
  {
@@ -398,7 +398,7 @@ diff --git a/src/RoguelikeMgr.cpp b/src/RoguelikeMgr.cpp
 index b0a1c9a..e3ffd37 100644
 --- a/src/RoguelikeMgr.cpp
 +++ b/src/RoguelikeMgr.cpp
-@@ -60,7 +60,7 @@
+@@ -60,7 +60,7 @@ void RoguelikeMgr::BuildAffixPool()
      {
          AffixDef a;
          a.Id           = AFFIX_FORTIFIED;
@@ -407,7 +407,7 @@ index b0a1c9a..e3ffd37 100644
          a.TrashHpMult  = 1.30f;
          a.TrashDmgMult = 1.15f;
          a.BossHpMult   = 1.0f;
-@@ -71,7 +71,7 @@
+@@ -71,7 +71,7 @@ void RoguelikeMgr::BuildAffixPool()
      {
          AffixDef a;
          a.Id           = AFFIX_TYRANNICAL;
@@ -416,7 +416,7 @@ index b0a1c9a..e3ffd37 100644
          a.TrashHpMult  = 1.0f;
          a.TrashDmgMult = 1.0f;
          a.BossHpMult   = 1.40f;
-@@ -82,7 +82,7 @@
+@@ -82,7 +82,7 @@ void RoguelikeMgr::BuildAffixPool()
      {
          AffixDef a;
          a.Id           = AFFIX_RAGING;
@@ -425,7 +425,7 @@ index b0a1c9a..e3ffd37 100644
          a.TrashHpMult  = 1.0f;
          a.TrashDmgMult = 1.25f;
          a.BossHpMult   = 1.0f;
-@@ -93,7 +93,7 @@
+@@ -93,7 +93,7 @@ void RoguelikeMgr::BuildAffixPool()
      {
          AffixDef a;
          a.Id           = AFFIX_BOLSTERING;
@@ -434,7 +434,7 @@ index b0a1c9a..e3ffd37 100644
          a.TrashHpMult  = 1.20f;
          a.TrashDmgMult = 1.0f;
          a.BossHpMult   = 1.20f;
-@@ -104,7 +104,7 @@
+@@ -104,7 +104,7 @@ void RoguelikeMgr::BuildAffixPool()
      {
          AffixDef a;
          a.Id              = AFFIX_SAVAGE;
@@ -443,7 +443,7 @@ index b0a1c9a..e3ffd37 100644
          a.TrashHpMult     = 1.0f;
          a.TrashDmgMult    = 1.10f;
          a.BossHpMult      = 1.0f;
-@@ -124,7 +124,7 @@
+@@ -124,7 +124,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
      if (!sDMConfig->IsRoguelikeEnabled())
      {
          ChatHandler(leader->GetSession()).SendSysMessage(
@@ -452,7 +452,7 @@ index b0a1c9a..e3ffd37 100644
          return false;
      }
  
-@@ -132,7 +132,7 @@
+@@ -132,7 +132,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
      if (IsPlayerInRun(leader->GetGUID()))
      {
          ChatHandler(leader->GetSession()).SendSysMessage(
@@ -461,7 +461,7 @@ index b0a1c9a..e3ffd37 100644
          return false;
      }
  
-@@ -140,7 +140,7 @@
+@@ -140,7 +140,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
      if (sDungeonMasterMgr->GetSessionByPlayer(leader->GetGUID()))
      {
          ChatHandler(leader->GetSession()).SendSysMessage(
@@ -470,7 +470,7 @@ index b0a1c9a..e3ffd37 100644
          return false;
      }
  
-@@ -150,7 +150,7 @@
+@@ -150,7 +150,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
          uint32 rem = sDungeonMasterMgr->GetRemainingCooldown(leader->GetGUID());
          char buf[256];
          snprintf(buf, sizeof(buf),
@@ -479,7 +479,7 @@ index b0a1c9a..e3ffd37 100644
              rem / 60, rem % 60);
          ChatHandler(leader->GetSession()).SendSysMessage(buf);
          return false;
-@@ -160,7 +160,7 @@
+@@ -160,7 +160,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
      if (!sDungeonMasterMgr->CanCreateNewSession())
      {
          ChatHandler(leader->GetSession()).SendSysMessage(
@@ -488,7 +488,7 @@ index b0a1c9a..e3ffd37 100644
          return false;
      }
  
-@@ -222,7 +222,7 @@
+@@ -222,7 +222,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
      if (!mapId)
      {
          ChatHandler(leader->GetSession()).SendSysMessage(
@@ -497,7 +497,7 @@ index b0a1c9a..e3ffd37 100644
          return false;
      }
  
-@@ -236,7 +236,7 @@
+@@ -236,7 +236,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
      if (!session)
      {
          ChatHandler(leader->GetSession()).SendSysMessage(
@@ -506,7 +506,7 @@ index b0a1c9a..e3ffd37 100644
          return false;
      }
  
-@@ -248,7 +248,7 @@
+@@ -248,7 +248,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
      if (!sDungeonMasterMgr->StartDungeon(session))
      {
          ChatHandler(leader->GetSession()).SendSysMessage(
@@ -515,7 +515,7 @@ index b0a1c9a..e3ffd37 100644
          sDungeonMasterMgr->CleanupRoguelikeSession(session->SessionId, false);
          return false;
      }
-@@ -256,7 +256,7 @@
+@@ -256,7 +256,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
      if (!sDungeonMasterMgr->TeleportPartyIn(session))
      {
          ChatHandler(leader->GetSession()).SendSysMessage(
@@ -524,7 +524,7 @@ index b0a1c9a..e3ffd37 100644
          sDungeonMasterMgr->CleanupRoguelikeSession(session->SessionId, false);
          return false;
      }
-@@ -283,10 +283,10 @@
+@@ -283,10 +283,10 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
      const Theme* theme = sDMConfig->GetTheme(themeId);
      char buf[256];
      snprintf(buf, sizeof(buf),
@@ -538,7 +538,7 @@ index b0a1c9a..e3ffd37 100644
  
      for (const auto& pd : run.Players)
          if (Player* p = ObjectAccessor::FindPlayer(pd.PlayerGuid))
-@@ -300,7 +300,7 @@
+@@ -300,7 +300,7 @@ bool RoguelikeMgr::StartRun(Player* leader, uint32 difficultyId, uint32 themeId,
          {
              char affixBuf[512];
              snprintf(affixBuf, sizeof(affixBuf),
@@ -547,7 +547,7 @@ index b0a1c9a..e3ffd37 100644
                  affixNames.c_str());
              for (const auto& pd : run.Players)
                  if (Player* p = ObjectAccessor::FindPlayer(pd.PlayerGuid))
-@@ -382,8 +382,8 @@
+@@ -382,8 +382,8 @@ void RoguelikeMgr::OnDungeonCompleted(uint32 runId, uint32 sessionId)
      // Announce progress
      char buf[512];
      snprintf(buf, sizeof(buf),
@@ -558,7 +558,7 @@ index b0a1c9a..e3ffd37 100644
          run->DungeonsCleared, run->CurrentTier);
  
      // Append active affixes
-@@ -403,7 +403,7 @@
+@@ -403,7 +403,7 @@ void RoguelikeMgr::OnDungeonCompleted(uint32 runId, uint32 sessionId)
      if (!affixStr.empty())
      {
          size_t len = strlen(buf);
@@ -567,7 +567,7 @@ index b0a1c9a..e3ffd37 100644
      }
  
      AnnounceToRun(*run, buf);
-@@ -417,8 +417,8 @@
+@@ -417,8 +417,8 @@ void RoguelikeMgr::OnDungeonCompleted(uint32 runId, uint32 sessionId)
          // Failed to create next dungeon — end the run gracefully
          char failBuf[256];
          snprintf(failBuf, sizeof(failBuf),
@@ -578,7 +578,7 @@ index b0a1c9a..e3ffd37 100644
              run->CurrentTier, run->DungeonsCleared);
          AnnounceToRun(*run, failBuf);
          EndRun(run->RunId, true);
-@@ -453,15 +453,15 @@
+@@ -453,15 +453,15 @@ void RoguelikeMgr::OnPartyWipe(uint32 runId)
  
      char buf[512];
      snprintf(buf, sizeof(buf),
@@ -603,7 +603,7 @@ index b0a1c9a..e3ffd37 100644
          run->CurrentTier, run->DungeonsCleared,
          run->TotalMobsKilled, run->TotalBossesKilled,
          run->TotalDeaths, dm, ds);
-@@ -541,12 +541,12 @@
+@@ -541,12 +541,12 @@ void RoguelikeMgr::EndRun(uint32 runId, bool announceResults)
  
          char buf[512];
          snprintf(buf, sizeof(buf),
@@ -622,7 +622,7 @@ index b0a1c9a..e3ffd37 100644
              run->CurrentTier, run->DungeonsCleared,
              run->TotalMobsKilled, run->TotalBossesKilled,
              dm, ds);
-@@ -868,7 +868,7 @@
+@@ -868,7 +868,7 @@ void RoguelikeMgr::IncrementBuffStacks(uint32 runId)
      float totalPct = BUFF_PCT_PER_STACK * run->BuffStacks;
      char buf[256];
      snprintf(buf, sizeof(buf),
@@ -631,7 +631,7 @@ index b0a1c9a..e3ffd37 100644
          totalPct, run->BuffStacks);
      AnnounceToRun(*run, buf);
  }
-@@ -1043,8 +1043,8 @@
+@@ -1043,8 +1043,8 @@ bool RoguelikeMgr::TransitionToNextDungeon(RoguelikeRun& run)
      const DungeonInfo* dg = sDMConfig->GetDungeon(mapId);
      char buf[256];
      snprintf(buf, sizeof(buf),
@@ -642,7 +642,7 @@ index b0a1c9a..e3ffd37 100644
      AnnounceToRun(run, buf);
  
      LOG_INFO("module", "RoguelikeMgr: Run {} transitioned to tier {} — map {} ({})",
-@@ -1094,7 +1094,7 @@
+@@ -1094,7 +1094,7 @@ void RoguelikeMgr::AnnounceCountdown(const RoguelikeRun& run, uint32 remainingSe
  {
      char buf[128];
      snprintf(buf, sizeof(buf),
@@ -655,7 +655,7 @@ diff --git a/src/scripts/dm_allmap_script.cpp b/src/scripts/dm_allmap_script.cpp
 index 4ea9afa..ae4efd1 100644
 --- a/src/scripts/dm_allmap_script.cpp
 +++ b/src/scripts/dm_allmap_script.cpp
-@@ -59,7 +59,7 @@
+@@ -59,7 +59,7 @@ public:
          session->InstanceId = instance->GetInstanceId();
  
          ChatHandler(player->GetSession()).SendSysMessage(
@@ -664,7 +664,7 @@ index 4ea9afa..ae4efd1 100644
  
          sDungeonMasterMgr->PopulateDungeon(session, instance);
  
-@@ -69,8 +69,8 @@
+@@ -69,8 +69,8 @@ public:
  
          char buf[256];
          snprintf(buf, sizeof(buf),
@@ -679,7 +679,7 @@ diff --git a/src/scripts/dm_command_script.cpp b/src/scripts/dm_command_script.c
 index cd9f936..9bdef6b 100644
 --- a/src/scripts/dm_command_script.cpp
 +++ b/src/scripts/dm_command_script.cpp
-@@ -37,22 +37,22 @@
+@@ -37,22 +37,22 @@ public:
      static bool HandleReload(ChatHandler* h)
      {
          sDMConfig->LoadConfig(true);
@@ -708,7 +708,7 @@ index cd9f936..9bdef6b 100644
              uint32(sDMConfig->GetDifficulties().size()),
              uint32(sDMConfig->GetThemes().size()),
              uint32(sDMConfig->GetDungeons().size()));
-@@ -64,7 +64,7 @@
+@@ -64,7 +64,7 @@ public:
      {
          uint32 n = sDungeonMasterMgr->GetActiveSessionCount();
          char buf[128];
@@ -717,7 +717,7 @@ index cd9f936..9bdef6b 100644
          h->SendSysMessage(buf);
          return true;
      }
-@@ -75,9 +75,9 @@
+@@ -75,9 +75,9 @@ public:
          if (sessionId)
          {
              Session* s = sDungeonMasterMgr->GetSession(*sessionId);
@@ -729,7 +729,7 @@ index cd9f936..9bdef6b 100644
          }
          else
          {
-@@ -92,10 +92,10 @@
+@@ -92,10 +92,10 @@ public:
                  s = t ? sDungeonMasterMgr->GetSessionByPlayer(t->GetGUID()) : nullptr;
              }
  
@@ -742,7 +742,7 @@ index cd9f936..9bdef6b 100644
          }
          return true;
      }
-@@ -103,7 +103,7 @@
+@@ -103,7 +103,7 @@ public:
      static bool HandleClearCD(ChatHandler* h)
      {
          Player* invoker = h->GetSession() ? h->GetSession()->GetPlayer() : nullptr;
@@ -751,7 +751,7 @@ index cd9f936..9bdef6b 100644
  
          // If invoker is in a group, clear cooldown for ALL group members
          Group* g = invoker->GetGroup();
-@@ -120,7 +120,7 @@
+@@ -120,7 +120,7 @@ public:
                  }
              }
              char buf[128];
@@ -760,7 +760,7 @@ index cd9f936..9bdef6b 100644
              h->SendSysMessage(buf);
          }
          else
-@@ -130,7 +130,7 @@
+@@ -130,7 +130,7 @@ public:
              if (!t) t = invoker;
              sDungeonMasterMgr->ClearCooldown(t->GetGUID());
              char buf[128];
@@ -773,7 +773,7 @@ diff --git a/src/scripts/dm_world_script.cpp b/src/scripts/dm_world_script.cpp
 index 91871e7..00e3628 100644
 --- a/src/scripts/dm_world_script.cpp
 +++ b/src/scripts/dm_world_script.cpp
-@@ -48,12 +48,12 @@
+@@ -48,12 +48,12 @@ public:
          sRoguelikeMgr->Initialize();
  
          LOG_INFO("module", "===============================================");
@@ -792,7 +792,7 @@ diff --git a/src/scripts/npc_dungeon_master.cpp b/src/scripts/npc_dungeon_master
 index 3d25aa6..d36e75a 100644
 --- a/src/scripts/npc_dungeon_master.cpp
 +++ b/src/scripts/npc_dungeon_master.cpp
-@@ -86,7 +86,7 @@
+@@ -86,7 +86,7 @@ public:
          if (!sDMConfig->IsEnabled())
          {
              ChatHandler(player->GetSession()).SendSysMessage(
@@ -801,7 +801,7 @@ index 3d25aa6..d36e75a 100644
              player->PlayerTalkClass->SendCloseGossip();
              return true;
          }
-@@ -95,7 +95,7 @@
+@@ -95,7 +95,7 @@ public:
              LOG_INFO("module", "DungeonMaster: NPC blocked {} — still in active session",
                  player->GetName());
              ChatHandler(player->GetSession()).SendSysMessage(
@@ -810,7 +810,7 @@ index 3d25aa6..d36e75a 100644
              player->PlayerTalkClass->SendCloseGossip();
              return true;
          }
-@@ -109,8 +109,8 @@
+@@ -109,8 +109,8 @@ public:
              {
                  char tierBuf[256];
                  snprintf(tierBuf, sizeof(tierBuf),
@@ -821,7 +821,7 @@ index 3d25aa6..d36e75a 100644
                      run->CurrentTier, run->DungeonsCleared,
                      run->DungeonsCleared != 1 ? "s" : "");
                  ChatHandler(player->GetSession()).SendSysMessage(tierBuf);
-@@ -118,13 +118,13 @@
+@@ -118,13 +118,13 @@ public:
              else
              {
                  ChatHandler(player->GetSession()).SendSysMessage(
@@ -838,7 +838,7 @@ index 3d25aa6..d36e75a 100644
                  GOSSIP_SENDER_MAIN, GOSSIP_ACTION_CANCEL);
  
              SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
-@@ -137,7 +137,7 @@
+@@ -137,7 +137,7 @@ public:
                  player->GetName(), rem);
              char buf[256];
              snprintf(buf, sizeof(buf),
@@ -847,7 +847,7 @@ index 3d25aa6..d36e75a 100644
                  rem / 60, rem % 60);
              ChatHandler(player->GetSession()).SendSysMessage(buf);
              player->PlayerTalkClass->SendCloseGossip();
-@@ -156,7 +156,7 @@
+@@ -156,7 +156,7 @@ public:
              if (!sDungeonMasterMgr->CanCreateNewSession())
              {
                  ChatHandler(player->GetSession()).SendSysMessage(
@@ -856,7 +856,7 @@ index 3d25aa6..d36e75a 100644
                  player->PlayerTalkClass->SendCloseGossip();
                  return true;
              }
-@@ -234,7 +234,7 @@
+@@ -234,7 +234,7 @@ public:
              if (sRoguelikeMgr->IsPlayerInRun(player->GetGUID()))
              {
                  ChatHandler(player->GetSession()).SendSysMessage(
@@ -865,7 +865,7 @@ index 3d25aa6..d36e75a 100644
                  player->PlayerTalkClass->SendCloseGossip();
                  return true;
              }
-@@ -265,7 +265,7 @@
+@@ -265,7 +265,7 @@ public:
              {
                  sRoguelikeMgr->QuitRun(player->GetGUID());
                  ChatHandler(player->GetSession()).SendSysMessage(
@@ -874,7 +874,7 @@ index 3d25aa6..d36e75a 100644
              }
              player->PlayerTalkClass->SendCloseGossip();
          }
-@@ -297,14 +297,14 @@
+@@ -297,14 +297,14 @@ private:
      void ShowMainMenu(Player* player, Creature* creature)
      {
          player->PlayerTalkClass->ClearMenus();
@@ -893,7 +893,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_STATS_MENU);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -318,20 +318,20 @@
+@@ -318,20 +318,20 @@ private:
          {
              char buf[256];
              if (!d.IsValidForLevel(lvl))
@@ -918,7 +918,7 @@ index 3d25aa6..d36e75a 100644
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
  
-@@ -352,17 +352,17 @@
+@@ -352,17 +352,17 @@ private:
  
          char buf1[256], buf2[256];
          snprintf(buf1, sizeof(buf1),
@@ -939,7 +939,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_CANCEL);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -372,7 +372,7 @@
+@@ -372,7 +372,7 @@ private:
          player->PlayerTalkClass->ClearMenus();
          for (const auto& t : sDMConfig->GetThemes())
              AddGossipItemFor(player, GOSSIP_ICON_BATTLE, t.Name, GOSSIP_SENDER_MAIN, GOSSIP_ACTION_THEME_BASE + t.Id);
@@ -948,7 +948,7 @@ index 3d25aa6..d36e75a 100644
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
  
-@@ -411,9 +411,9 @@
+@@ -411,9 +411,9 @@ private:
                  it->second.DungeonPage = page;
          }
  
@@ -960,7 +960,7 @@ index 3d25aa6..d36e75a 100644
                  GOSSIP_SENDER_MAIN, GOSSIP_ACTION_DUNGEON_RANDOM);
  
          // Render this page's slice of dungeons.
-@@ -432,17 +432,17 @@
+@@ -432,17 +432,17 @@ private:
  
          if (dungeons.empty())
              AddGossipItemFor(player, GOSSIP_ICON_CHAT,
@@ -982,7 +982,7 @@ index 3d25aa6..d36e75a 100644
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
  
-@@ -459,7 +459,7 @@
+@@ -459,7 +459,7 @@ private:
          const DifficultyTier* diff = sDMConfig->GetDifficulty(sel.DifficultyId);
          const Theme*          theme = sDMConfig->GetTheme(sel.ThemeId);
  
@@ -991,7 +991,7 @@ index 3d25aa6..d36e75a 100644
          if (sel.MapId > 0)
              if (const DungeonInfo* dg = sDMConfig->GetDungeon(sel.MapId))
                  dgName = dg->Name;
-@@ -468,25 +468,25 @@
+@@ -468,25 +468,25 @@ private:
          uint32 ps = g ? g->GetMembersCount() : 1;
  
          char buf[256];
@@ -1027,7 +1027,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_CANCEL);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -494,16 +494,16 @@
+@@ -494,16 +494,16 @@ private:
      void ShowInfoMenu(Player* player, Creature* creature)
      {
          player->PlayerTalkClass->ClearMenus();
@@ -1053,7 +1053,7 @@ index 3d25aa6..d36e75a 100644
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
  
-@@ -512,14 +512,14 @@
+@@ -512,14 +512,14 @@ private:
      void ShowStatsAndBoardsMenu(Player* player, Creature* creature)
      {
          player->PlayerTalkClass->ClearMenus();
@@ -1072,15 +1072,14 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_CANCEL);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -539,32 +539,32 @@
+@@ -539,32 +539,32 @@ private:
          auto chat = ChatHandler(player->GetSession());
          char buf[256];
  
 -        chat.SendSysMessage("|cFFFFD700═══════════ Normal Run Stats ═══════════|r");
--
--        snprintf(buf, sizeof(buf), "  Runs: |cFFFFFFFF%u|r  —  Completed: |cFF00FF00%u|r  —  Failed: |cFFFF0000%u|r",
 +        chat.SendSysMessage("|cFFFFD700═══════════ 普通挑战战绩 ═══════════|r");
-+
+ 
+-        snprintf(buf, sizeof(buf), "  Runs: |cFFFFFFFF%u|r  —  Completed: |cFF00FF00%u|r  —  Failed: |cFFFF0000%u|r",
 +        snprintf(buf, sizeof(buf), "  挑战次数：|cFFFFFFFF%u|r  —  完成：|cFF00FF00%u|r  —  失败：|cFFFF0000%u|r",
              st.TotalRuns, st.CompletedRuns, st.FailedRuns);
          chat.SendSysMessage(buf);
@@ -1112,7 +1111,7 @@ index 3d25aa6..d36e75a 100644
              chat.SendSysMessage(buf);
          }
  
-@@ -572,15 +572,15 @@
+@@ -572,15 +572,15 @@ private:
          {
              char timeBuf[64];
              FormatTime(st.FastestClear, timeBuf, sizeof(timeBuf));
@@ -1131,15 +1130,14 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_STATS_MENU);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -592,38 +592,38 @@
+@@ -592,38 +592,38 @@ private:
          auto chat = ChatHandler(player->GetSession());
          char buf[256];
  
 -        chat.SendSysMessage("|cFF00FFFF═══════════ Roguelike Stats ═══════════|r");
--
--        snprintf(buf, sizeof(buf), "  Total Runs: |cFFFFFFFF%u|r", st.TotalRuns);
 +        chat.SendSysMessage("|cFF00FFFF═══════════ 无尽模式战绩 ═══════════|r");
-+
+ 
+-        snprintf(buf, sizeof(buf), "  Total Runs: |cFFFFFFFF%u|r", st.TotalRuns);
 +        snprintf(buf, sizeof(buf), "  挑战总次数：|cFFFFFFFF%u|r", st.TotalRuns);
          chat.SendSysMessage(buf);
  
@@ -1179,7 +1177,7 @@ index 3d25aa6..d36e75a 100644
              chat.SendSysMessage(buf);
          }
  
-@@ -631,15 +631,15 @@
+@@ -631,15 +631,15 @@ private:
          {
              char timeBuf[64];
              FormatTime(st.LongestRunTime, timeBuf, sizeof(timeBuf));
@@ -1198,7 +1196,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_STATS_MENU);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -650,18 +650,18 @@
+@@ -650,18 +650,18 @@ private:
      {
          player->PlayerTalkClass->ClearMenus();
          AddGossipItemFor(player, GOSSIP_ICON_TABARD,
@@ -1221,7 +1219,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_STATS_MENU);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -673,11 +673,11 @@
+@@ -673,11 +673,11 @@ private:
          auto entries = sDungeonMasterMgr->GetOverallLeaderboard(10);
          auto chat = ChatHandler(player->GetSession());
  
@@ -1235,7 +1233,7 @@ index 3d25aa6..d36e75a 100644
          }
          else
          {
-@@ -704,14 +704,14 @@
+@@ -704,14 +704,14 @@ private:
                      dg ? dg->Name.c_str() : "?",
                      diff ? diff->Name.c_str() : "?",
                      e.PartySize,
@@ -1253,7 +1251,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_BOARD_MENU);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -724,12 +724,12 @@
+@@ -724,12 +724,12 @@ private:
          auto chat = ChatHandler(player->GetSession());
  
          if (sortByFloors)
@@ -1269,7 +1267,7 @@ index 3d25aa6..d36e75a 100644
          else
          {
              uint32 rank = 0;
-@@ -743,24 +743,24 @@
+@@ -743,24 +743,24 @@ private:
                  bool isMe = (e.Guid == myGuid);
                  char buf[384];
                  snprintf(buf, sizeof(buf),
@@ -1298,7 +1296,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_BOARD_MENU);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -773,13 +773,13 @@
+@@ -773,13 +773,13 @@ private:
          uint8 lvl = player->GetLevel();
  
          ChatHandler(player->GetSession()).SendSysMessage(
@@ -1316,7 +1314,7 @@ index 3d25aa6..d36e75a 100644
          ChatHandler(player->GetSession()).SendSysMessage(
              "|cFF00FFFF========================================|r");
  
-@@ -787,17 +787,17 @@
+@@ -787,17 +787,17 @@ private:
          {
              char buf[256];
              if (!d.IsValidForLevel(lvl))
@@ -1337,7 +1335,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_CANCEL);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -810,15 +810,15 @@
+@@ -810,15 +810,15 @@ private:
  
          char buf1[256], buf2[256];
          snprintf(buf1, sizeof(buf1),
@@ -1356,7 +1354,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_CANCEL);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -829,7 +829,7 @@
+@@ -829,7 +829,7 @@ private:
          for (const auto& t : sDMConfig->GetThemes())
              AddGossipItemFor(player, GOSSIP_ICON_BATTLE, t.Name,
                  GOSSIP_SENDER_MAIN, GOSSIP_ACTION_ROGUELIKE_THEME + t.Id);
@@ -1365,7 +1363,7 @@ index 3d25aa6..d36e75a 100644
              GOSSIP_SENDER_MAIN, GOSSIP_ACTION_CANCEL);
          SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
      }
-@@ -843,7 +843,7 @@
+@@ -843,7 +843,7 @@ private:
            auto it = sSelections.find(player->GetGUID());
            if (it == sSelections.end()) {
                ChatHandler(player->GetSession()).SendSysMessage(
@@ -1374,7 +1372,7 @@ index 3d25aa6..d36e75a 100644
                return; }
            sel = it->second;
            sSelections.erase(it); }
-@@ -852,7 +852,7 @@
+@@ -852,7 +852,7 @@ private:
          if (!diff || !diff->IsValidForLevel(player->GetLevel()))
          {
              ChatHandler(player->GetSession()).SendSysMessage(
@@ -1383,7 +1381,7 @@ index 3d25aa6..d36e75a 100644
              return;
          }
  
-@@ -861,12 +861,12 @@
+@@ -861,12 +861,12 @@ private:
              sel.ThemeId, sel.ScaleToParty))
          {
              ChatHandler(player->GetSession()).SendSysMessage(
@@ -1398,7 +1396,7 @@ index 3d25aa6..d36e75a 100644
      }
  
      // ---- Launch ----
-@@ -878,7 +878,7 @@
+@@ -878,7 +878,7 @@ private:
          { std::lock_guard<std::mutex> lk(sSelMutex);
            auto it = sSelections.find(player->GetGUID());
            if (it == sSelections.end()) {
@@ -1407,7 +1405,7 @@ index 3d25aa6..d36e75a 100644
                return; }
            sel = it->second;
            sSelections.erase(it); }
-@@ -886,7 +886,7 @@
+@@ -886,7 +886,7 @@ private:
          const DifficultyTier* diff = sDMConfig->GetDifficulty(sel.DifficultyId);
          if (!diff || !diff->IsValidForLevel(player->GetLevel()))
          {
@@ -1416,7 +1414,7 @@ index 3d25aa6..d36e75a 100644
              return;
          }
  
-@@ -896,7 +896,7 @@
+@@ -896,7 +896,7 @@ private:
          {
              auto dgs = sDMConfig->GetDungeonsForLevel(diff->MinLevel, diff->MaxLevel);
              if (dgs.empty()) {
@@ -1425,7 +1423,7 @@ index 3d25aa6..d36e75a 100644
                  return; }
              static thread_local std::mt19937 rng{ std::random_device{}() };
              mapId = dgs[std::uniform_int_distribution<size_t>(0, dgs.size()-1)(rng)]->MapId;
-@@ -904,15 +904,15 @@
+@@ -904,15 +904,15 @@ private:
  
          Session* s = sDungeonMasterMgr->CreateSession(player, sel.DifficultyId, sel.ThemeId, mapId, sel.ScaleToParty);
          if (!s) {
@@ -1444,7 +1442,7 @@ index 3d25aa6..d36e75a 100644
              sDungeonMasterMgr->AbandonSession(s->SessionId); return; }
  
          if (sDMConfig->ShouldAnnounceCompletion())
-@@ -921,20 +921,21 @@
+@@ -921,20 +921,21 @@ private:
              const DungeonInfo* dg = sDMConfig->GetDungeon(mapId);
              char buf[256];
              snprintf(buf, sizeof(buf),
