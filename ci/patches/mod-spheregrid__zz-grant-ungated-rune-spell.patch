@@ -1,0 +1,66 @@
+diff --git a/src/core/SphereGridPlayerMgr.cpp b/src/core/SphereGridPlayerMgr.cpp
+--- a/src/core/SphereGridPlayerMgr.cpp
++++ b/src/core/SphereGridPlayerMgr.cpp
+@@ -737,8 +737,44 @@
+ 
+         // The Blizzard rank must be known, otherwise the rune stays inert.
+         uint32 const baseRank = sSpellMgr->GetSpellWithRank(rune->firstSpellId, rune->baseRank, true);
+-        if (!baseRank || !player->HasSpell(baseRank))
+-            continue;
++        if (!baseRank)
++            continue;
++
++        // A RUNE MAY CARRY A SPELL THE HERO DOES NOT HAVE YET: then it GRANTS it.
++        //
++        // The runes shipped with the module EXTEND a spell already in the book
++        // ("you know rank 13, the rune sells you 14 to 16"), so "not known" has
++        // always meant "inert". A grid whose runes ARE the content -- one notable
++        // per socket, with no rank family behind it -- needs the other reading,
++        // and the two can never be confused: a spell is either in the book
++        // (extend it) or it is not (grant it).
++        //
++        // The discriminator is CLASS 0 plus the ABSENCE OF A RANK CHAIN:
++        //
++        //   * classId 0 is this codebase's existing word for "belongs to no one
++        //     class" -- the shared grid's nodes and edges are all class 0, and
++        //     SocketNode() already lets a class-0 rune be socketed by anybody.
++        //     All 154 shipped runes carry a real class (1..11), so none of them
++        //     can reach this branch.
++        //   * no chain node means the spell stands alone: GetSpellWithRank returns
++        //     the spell itself for rank <= 1 and there is nothing above it to walk
++        //     to. Eighteen shipped runes name base_rank 1, and without this second
++        //     test they WOULD be caught here and would start handing out a base
++        //     ability for free.
++        //
++        // Removal needs nothing new: the block below works off `toKnow`, and a
++        // granted spell that leaves it is unlearned by the existing sweep. Nor is
++        // a rank warning owed to the client -- SMSG_SUPERCEDED_SPELL is about
++        // going DOWN a chain, and a standalone spell has no chain.
++        if (!player->HasSpell(baseRank))
++        {
++            if (!rune->classId && !sSpellMgr->GetSpellChainNode(rune->firstSpellId))
++            {
++                toKnow.insert(rune->firstSpellId);
++                tops[rune->firstSpellId] = rune->firstSpellId;
++            }
++            continue;
++        }
+ 
+         uint32 top = baseRank;
+         uint8 const granted = std::min<uint8>(count, SphereGridMgr::RUNES_PER_SPELL);
+diff --git a/data/lua/SphereGrid/player/Player.lua b/data/lua/SphereGrid/player/Player.lua
+--- a/data/lua/SphereGrid/player/Player.lua
++++ b/data/lua/SphereGrid/player/Player.lua
+@@ -379,7 +379,11 @@
+         repeat
+             def.runes[q:GetUInt32(0)] = {
+                 spell = q:GetUInt32(1),
+-                rank = q:GetUInt32(2) + 1,
++                -- A GRANT rune teaches the spell itself, so its first rune already
++                -- puts the hero at rank 1. base_spell_id 0 is the module's word for
++                -- "no prerequisite", which is what such a rune has; a shipped rank
++                -- rune still reads base_rank + 1.
++                rank = (q:GetUInt32(3) == 0) and 1 or (q:GetUInt32(2) + 1),
+                 quality = 4,
+                 -- The game's own rank that must ALREADY be known: without it the rune stays
+                 -- inert, which is the module's rule. The player is told which one before
