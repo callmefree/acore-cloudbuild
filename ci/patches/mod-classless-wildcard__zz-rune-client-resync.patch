@@ -1,0 +1,107 @@
+diff --git a/src/ClasslessPlayerScript.cpp b/src/ClasslessPlayerScript.cpp
+--- a/src/ClasslessPlayerScript.cpp
++++ b/src/ClasslessPlayerScript.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include "Chat.h"
+ #include "ClasslessMgr.h"
++#include "Config.h"
+ #include "Containers.h"
+ #include "DBCStores.h"
+ #include "DatabaseEnv.h"
+@@ -35,6 +36,71 @@
+ #include "World.h"
+ 
+ using namespace ClasslessWildcard;
++
++namespace
++{
++// Local patch -- client rune resync ----------------------------------------
++//
++// A Hero is never a real Death Knight, so the client never brings a spent
++// rune back on its own, and the core never tells it to ("runes act as
++// cooldowns, and they don't need to send any data"). The mask packet the
++// module already sends only fires when the rune state CHANGES, so once the
++// client's copy is wrong the packet never comes again and the character can
++// not cast a rune spell until a relog. Resend the whole rune block -- and
++// the ready mask -- on a timer instead, so the client's copy is corrected
++// even when nothing changed on our side.
++//
++// ClasslessWildcard.Runes.ClientResync    = 0 turns this off (default 1).
++// ClasslessWildcard.Runes.ResyncReadyByte = 0 flips the ready byte to the
++// low value (default 255) for hosts where the client reads the field the
++// other way round. Both are read every tick, so `reload config` is enough.
++void PushClientRuneState(Player* player)
++{
++    if (player->getClass() == CLASS_DEATH_KNIGHT) // the client ticks runes itself
++        return;
++
++    // Value that means "this rune is ready". The core writes 255 here, so that
++    // is the default; the switch exists because this field is a ratio the
++    // client interprets, and a rebuild is far more expensive than a reload.
++    bool const readyHigh =
++        sConfigMgr->GetOption<uint32>("ClasslessWildcard.Runes.ResyncReadyByte", 255) != 0;
++
++    uint8 readyMask = 0;
++    WorldPacket resync(SMSG_RESYNC_RUNES, 4 + MAX_RUNES * 2);
++    resync << uint32(MAX_RUNES);
++    for (uint8 i = 0; i < MAX_RUNES; ++i)
++    {
++        uint32 const cooldown = player->GetRuneCooldown(i);
++        uint8 byte = readyHigh ? 255 : 0;
++        if (cooldown)
++        {
++            uint32 const base = player->GetRuneBaseCooldown(i, true);
++            uint32 const passed = (base > cooldown) ? (base - cooldown) : 0;
++            uint32 const elapsed = base ? uint32((uint64(passed) * 255) / base) : 0;
++            if (readyHigh)
++                byte = uint8(elapsed > 250 ? 250 : elapsed); // never call a rune ready from the clock
++            else
++                byte = uint8(elapsed < 5 ? 5 : 255 - elapsed); // and never from the other end either
++        }
++        else
++            readyMask |= uint8(1 << i);
++
++        resync << uint8(player->GetCurrentRune(i));
++        resync << uint8(byte);
++    }
++    player->SendDirectMessage(&resync);
++
++    // The mask is the packet the client definitely reads as "this rune is
++    // usable again"; it goes last so it wins over the fractions above.
++    if (readyMask)
++    {
++        WorldPacket data(SMSG_ADD_RUNE_POWER, 4);
++        data << uint32(readyMask);
++        player->SendDirectMessage(&data);
++    }
++}
++} // namespace
++// -------------------------------------------------------------------------
+ 
+ class ClasslessWorldScript : public WorldScript
+ {
+@@ -813,6 +879,12 @@
+                             if (!own)
+                                 PushAddon(player, "RU|0|0");
+                         }
++
++                        // Local patch: the client's own rune copy is what
++                        // gates its cast, so keep it in step every second.
++                        if (cpSt.lastRuneOwn > 0
++                            && sConfigMgr->GetOption<bool>("ClasslessWildcard.Runes.ClientResync", true))
++                            PushClientRuneState(player);
+                     }
+                 }
+ 
+@@ -837,6 +909,10 @@
+                         WorldPacket data(SMSG_ADD_RUNE_POWER, 4);
+                         data << uint32(back);
+                         player->SendDirectMessage(&data);
++                        // Local patch: correct the client at once instead
++                        // of waiting for the next second tick.
++                        if (sConfigMgr->GetOption<bool>("ClasslessWildcard.Runes.ClientResync", true))
++                            PushClientRuneState(player);
+                     }
+                 }
+ 
