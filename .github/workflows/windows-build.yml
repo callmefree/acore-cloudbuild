@@ -78,7 +78,10 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: azerothcore/azerothcore-wotlk
-          ref: master
+          # 2026-10-11 钉版本：这里编的就是线上当前在跑的提交（bin/Server.log 的 rev）。
+          # 想跟 HEAD 走就改回 master——但升级 AC 之前必须先确认模块 SQL 已导入，
+          # 否则世界服启动查新列会断言崩（见 modules.list 里的 SQL 说明）。
+          ref: 8c53e9f3eb2b2bc4ff438486cb28824364c4724e
           path: ac
 
       - name: Record AC commit
@@ -188,9 +191,20 @@ jobs:
               *) echo "::error::bad repo spec for $dir: '$repo'"; exit 1 ;;
             esac
             rm -rf "modules/$dir"
+            # 钉版本：modules.list 的"分支"字段写成 7~40 位十六进制提交号时，直接取该提交的
+            # 源码包（codeload 对公开库免鉴权），不依赖 `git fetch <sha>` 在不同 git 版本下的行为。
+            # 取出来的快照没有 .git，先建一个最小仓库——后面的 git apply 需要仓库上下文。
+            if [[ "$branch" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+              m="$(printf '%s' "$repo" | sed -E 's#^https?://github\.com/##; s#\.git$##')"
+              echo "PIN $repo @$branch -> modules/$dir (tarball)"
+              mkdir -p "modules/$dir"
+              curl -fsSL "https://codeload.github.com/$m/tar.gz/$branch" | tar -xz -C "modules/$dir" --strip-components=1
+              git init -q "modules/$dir"
+              git -C "modules/$dir" add -A
+              git -C "modules/$dir" -c user.email=ci@local -c user.name=ci commit -qm "pinned $branch"
             # 只有 "<url>.git:<子目录>" 才算多模块大仓。
             # 不能简单用 ==*:* 判断——普通 https://... 里也有冒号，会把 "https" 当成仓库名。
-            if [[ "$repo" =~ ^(https?://[^:]+\.git):(.+)$ ]]; then
+            elif [[ "$repo" =~ ^(https?://[^:]+\.git):(.+)$ ]]; then
               mrepo="${BASH_REMATCH[1]}"; sub="${BASH_REMATCH[2]}"
               tmp="$(mktemp -d)"
               echo "CLONE monorepo $mrepo @$branch -> extract '$sub' as $dir"
