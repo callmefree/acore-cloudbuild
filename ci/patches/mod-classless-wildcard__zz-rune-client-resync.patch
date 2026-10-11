@@ -1,15 +1,16 @@
 diff --git a/src/ClasslessPlayerScript.cpp b/src/ClasslessPlayerScript.cpp
 --- a/src/ClasslessPlayerScript.cpp
 +++ b/src/ClasslessPlayerScript.cpp
-@@ -15,6 +15,7 @@
+@@ -15,6 +15,8 @@
  
  #include "Chat.h"
  #include "ClasslessMgr.h"
 +#include "Config.h"
++#include "Log.h"
  #include "Containers.h"
  #include "DBCStores.h"
  #include "DatabaseEnv.h"
-@@ -35,6 +36,71 @@
+@@ -35,6 +37,118 @@
  #include "World.h"
  
  using namespace ClasslessWildcard;
@@ -27,26 +28,51 @@ diff --git a/src/ClasslessPlayerScript.cpp b/src/ClasslessPlayerScript.cpp
 +// the ready mask -- on a timer instead, so the client's copy is corrected
 +// even when nothing changed on our side.
 +//
-+// ClasslessWildcard.Runes.ClientResync    = 0 turns this off (default 1).
-+// ClasslessWildcard.Runes.ResyncReadyByte = 0 flips the ready byte to the
-+// low value (default 255) for hosts where the client reads the field the
-+// other way round. Both are read every tick, so `reload config` is enough.
-+void PushClientRuneState(Player* player)
++// Everything below is a switch, because this client field is a ratio the
++// client itself interprets and a rebuild costs half an hour while a reload
++// costs a second:
++//   ClasslessWildcard.Runes.ClientResync    (1) master switch
++//   ClasslessWildcard.Runes.ResyncPacket    (1) send SMSG_RESYNC_RUNES at all
++//   ClasslessWildcard.Runes.ResyncReadyByte (255) value meaning "ready"; 0 flips it
++//   ClasslessWildcard.Runes.MaskAll         (0) send mask 0x3F, i.e. claim every
++//                                               rune is usable, every push
++//   ClasslessWildcard.Runes.ConvertRefresh  (0) send SMSG_CONVERT_RUNE for each
++//                                               recovered rune (same type)
++//   ClasslessWildcard.Runes.ResyncDebug     (0) log every push to Logger.module
++//   ClasslessWildcard.Runes.RegenPermille   (100) PLAYER_RUNE_REGEN_x = v/1000.
++//       Player::InitRunes bails out before it ever sets this field for a
++//       character whose class is not DEATHKNIGHT, so a rune Hero carries a
++//       regen rate of 0 -- and if the client drives its own rune recovery
++//       from that field, its runes never come back no matter what we send.
++void PushClientRuneState(Player* player, char const* tag)
 +{
 +    if (player->getClass() == CLASS_DEATH_KNIGHT) // the client ticks runes itself
 +        return;
 +
-+    // Value that means "this rune is ready". The core writes 255 here, so that
-+    // is the default; the switch exists because this field is a ratio the
-+    // client interprets, and a rebuild is far more expensive than a reload.
 +    bool const readyHigh =
 +        sConfigMgr->GetOption<uint32>("ClasslessWildcard.Runes.ResyncReadyByte", 255) != 0;
++    bool const sendResync = sConfigMgr->GetOption<bool>("ClasslessWildcard.Runes.ResyncPacket", true);
++    bool const maskAll = sConfigMgr->GetOption<bool>("ClasslessWildcard.Runes.MaskAll", false);
++    bool const convert = sConfigMgr->GetOption<bool>("ClasslessWildcard.Runes.ConvertRefresh", false);
++    bool const debug = sConfigMgr->GetOption<bool>("ClasslessWildcard.Runes.ResyncDebug", false);
++
++    // A real Death Knight gets 0.1f here in Player::InitRunes, while a Hero
++    // returns from that function before the line is ever reached.
++    uint32 const regenPermille =
++        sConfigMgr->GetOption<uint32>("ClasslessWildcard.Runes.RegenPermille", 100);
 +
 +    uint8 readyMask = 0;
 +    WorldPacket resync(SMSG_RESYNC_RUNES, 4 + MAX_RUNES * 2);
 +    resync << uint32(MAX_RUNES);
 +    for (uint8 i = 0; i < MAX_RUNES; ++i)
 +    {
++        if (regenPermille)
++        {
++            float const want = float(regenPermille) / 1000.0f;
++            if (player->GetFloatValue(PLAYER_RUNE_REGEN_1 + i) != want)
++                player->SetFloatValue(PLAYER_RUNE_REGEN_1 + i, want);
++        }
++
 +        uint32 const cooldown = player->GetRuneCooldown(i);
 +        uint8 byte = readyHigh ? 255 : 0;
 +        if (cooldown)
@@ -60,28 +86,50 @@ diff --git a/src/ClasslessPlayerScript.cpp b/src/ClasslessPlayerScript.cpp
 +                byte = uint8(elapsed < 5 ? 5 : 255 - elapsed); // and never from the other end either
 +        }
 +        else
++        {
 +            readyMask |= uint8(1 << i);
++            if (convert)
++            {
++                // Converting a rune is what Blood Tap does, and the client
++                // hands the rune back for it; same type, so nothing changes
++                // on our side.
++                WorldPacket conv(SMSG_CONVERT_RUNE, 2);
++                conv << uint8(i);
++                conv << uint8(player->GetCurrentRune(i));
++                player->SendDirectMessage(&conv);
++            }
++        }
 +
 +        resync << uint8(player->GetCurrentRune(i));
 +        resync << uint8(byte);
 +    }
-+    player->SendDirectMessage(&resync);
 +
-+    // The mask is the packet the client definitely reads as "this rune is
-+    // usable again"; it goes last so it wins over the fractions above.
-+    if (readyMask)
++    if (sendResync)
++        player->SendDirectMessage(&resync);
++
++    // The mask is the packet the client reads as "this rune is usable again";
++    // it goes last so it wins over the fractions above.
++    uint32 const mask = maskAll ? uint32(0x3F) : uint32(readyMask);
++    if (mask)
 +    {
 +        WorldPacket data(SMSG_ADD_RUNE_POWER, 4);
-+        data << uint32(readyMask);
++        data << uint32(mask);
 +        player->SendDirectMessage(&data);
 +    }
++
++    if (debug)
++        LOG_INFO("module", "CW runes {} [{}] mask 0x{:02x} cd {},{},{},{},{},{} regen {} resync={} maskall={} convert={}",
++                 player->GetName(), tag, mask,
++                 player->GetRuneCooldown(0), player->GetRuneCooldown(1), player->GetRuneCooldown(2),
++                 player->GetRuneCooldown(3), player->GetRuneCooldown(4), player->GetRuneCooldown(5),
++                 player->GetFloatValue(PLAYER_RUNE_REGEN_1), sendResync, maskAll, convert);
 +}
 +} // namespace
 +// -------------------------------------------------------------------------
  
  class ClasslessWorldScript : public WorldScript
  {
-@@ -813,6 +879,12 @@
+@@ -813,6 +927,12 @@
                              if (!own)
                                  PushAddon(player, "RU|0|0");
                          }
@@ -90,18 +138,18 @@ diff --git a/src/ClasslessPlayerScript.cpp b/src/ClasslessPlayerScript.cpp
 +                        // gates its cast, so keep it in step every second.
 +                        if (cpSt.lastRuneOwn > 0
 +                            && sConfigMgr->GetOption<bool>("ClasslessWildcard.Runes.ClientResync", true))
-+                            PushClientRuneState(player);
++                            PushClientRuneState(player, "tick");
                      }
                  }
  
-@@ -837,6 +909,10 @@
+@@ -837,6 +957,10 @@
                          WorldPacket data(SMSG_ADD_RUNE_POWER, 4);
                          data << uint32(back);
                          player->SendDirectMessage(&data);
 +                        // Local patch: correct the client at once instead
 +                        // of waiting for the next second tick.
 +                        if (sConfigMgr->GetOption<bool>("ClasslessWildcard.Runes.ClientResync", true))
-+                            PushClientRuneState(player);
++                            PushClientRuneState(player, "edge");
                      }
                  }
  
