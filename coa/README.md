@@ -321,13 +321,28 @@ The rest of this section describes the host as it was found:
   tunnels are verified from outside the LAN, but nobody has reached the character screen.
 - The imported data still carries 3234 legacy SQUID bot characters (`RNDBOT*` accounts,
   ~91% of the character table); only 135 characters belong to real players, and the
-  legacy bots have no AI under this module. Purging them is a separate, destructive call.
+  legacy bots have no AI under this module. Provenance, verified 2026-10-17: 154 `RNDBOT*`
+  accounts (`acore_auth.account` ids 71-275) created 2026-09-16 20:41 → 2026-09-26 06:16,
+  i.e. the old server's SQUID era — the legacy repack ships
+  `Core/configs/modules/playerbots.conf.dist:106 AiPlayerbot.RandomBotAccountPrefix = "rndbot"`;
+  330 of the characters sit in 22 bot-only guilds of exactly 15 members; SQUID's own tables
+  (`playerbots_names` 100000 rows, `playerbots_guild_names`, `playerbots_arena_team_names`)
+  were deliberately not imported, and its `acore_playerbots` database exists only inside the
+  old host's MySQL datadir. Purging is safe for this stack: `mod-coa-playerbots` at the built
+  commit `c76847a` has zero references to `rndbot`/`RandomBotAccountPrefix` (its only prefix is
+  `CoaBots.RandomSpawn.AccountPrefix = "CoaBotHost"`), the core created no new `rndbot` account
+  after the cutover, and the newest character guids (3612-3620) belong to the new `COABOTHOST`
+  bots, so deleting the legacy rows cannot cause guid/account-id reuse. Operator decision
+  (2026-10-17): **keep them for now**; only 22 bot-only guilds plus `guild_member`, `mail`,
+  `item_instance` (44881 rows), `character_*` rows would have to be cleaned together.
 - The old host is stopped but not decommissioned, and the security findings on it are
   unchanged by decision of the operator (the `COA` share stays anonymously writable, its
   GitHub PAT and gateway tokens were not rotated). The temporary channel used for the
   export was cleaned up: `C:\COA\脚本\coa_dsh_share_sync.py` was restored byte-exact
   (18034 bytes, sha256 `BEE23D79...ABBC42`) and the token-bearing worker and probe file
-  were deleted.
+  were deleted. **Before that host is retired**, archive the one asset that has no copy
+  anywhere else: its MySQL datadir holds the SQUID-only database `acore_playerbots`
+  (the exported dumps cover `acore_auth` + `acore_characters` only).
 
 Client: WotLK 3.3.5a with `realmlist.wtf` → `set realmlist soulcore.asia`
 (realm address/port in `acore_auth.realmlist` are `soulcore.asia:8085`, exactly as the
