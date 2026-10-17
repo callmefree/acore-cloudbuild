@@ -152,6 +152,37 @@ docker logs coa-worldserver 2>&1 | sed -e 's/\x1b\[[0-9;]*m//g' \
 Beware that `docker logs` keeps output from *previous* runs too - compare against the
 line after the last `AzerothCore rev.` banner before concluding anything.
 
+### "Can log in, but connecting to the server failed" (remote clients)
+
+The CoA client talks to the worldserver with extension opcodes that a stock AzerothCore
+worldserver rejects. The fork only accepts them when
+
+```cpp
+// src/server/game/Server/WorldSocket.cpp:117-141
+allowAscensionClient = GetRemoteIpAddress().is_loopback()
+                      || sConfigMgr->GetOption<bool>("CoA.AllowRemoteClients", false, false);
+_ascensionCompatEnabled = allowAscensionClient && sConfigMgr->GetOption<bool>("CoA.Enable", ...);
+```
+
+so on the old server (frpc ran next to the worldserver, source IP `127.0.0.1`) the path was
+auto-enabled, while here every player arrives through the `coa-frpc` container and the
+source IP is `172.26.0.6`. Without `CoA.AllowRemoteClients = 1` the client authenticates,
+then its next header fails `IsValidOpcode() && !isAscensionExtension` and the socket is
+closed - the client reports "connection to the server failed".
+
+Symptom in `logs/Server.log` (note: appender `w`, so the file only holds the current run):
+
+```
+WorldSocket::ReadHeaderHandler(): client 172.26.0.6 sent malformed packet
+  (raw: 000CDC010000, cryptInitialized: true, size: 8066, cmd: 2426663635)
+```
+
+`extra-config.conf` therefore ships `CoA.AllowRemoteClients = 1` (see the comment there).
+It must stay `1` while the world port is published through the tunnel. Diagnostic
+shortcut: a plain TCP connect to `soulcore.asia:8085` must answer with a 44-byte
+`SMSG_AUTH_CHALLENGE` (`002a ec01 01000000 <32-byte seed>`) - if it does, the tunnel and
+the worldserver are fine and the remaining fault is the opcode/compat gate above.
+
 ### Self-healing and database snapshots
 
 `restart: unless-stopped` only covers a process that dies. Two extra layers, both
