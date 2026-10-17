@@ -12,14 +12,18 @@ IMAGE_DEFAULT=ghcr.io/callmefree/coa-server:latest
 log() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 
 if [ ! -f .env ]; then
-    log "creating .env with a fresh database password"
-    pw="$(openssl rand -hex 16)"
-    sed -e "s|^COA_DB_ROOT_PASSWORD=.*|COA_DB_ROOT_PASSWORD=${pw}|" .env.example > .env
+    log "creating .env with fresh database and SOAP passwords"
+    sed -e "s|^COA_DB_ROOT_PASSWORD=.*|COA_DB_ROOT_PASSWORD=$(openssl rand -hex 16)|" \
+        -e "s|^COA_SOAP_PASSWORD=.*|COA_SOAP_PASSWORD=$(openssl rand -hex 12)|" .env.example > .env
     chmod 600 .env
+elif ! grep -q '^COA_SOAP_PASSWORD=..' .env; then
+    printf 'COA_SOAP_PASSWORD=%s\n' "$(openssl rand -hex 12)" >> .env
 fi
 set -a; . ./.env; set +a
 IMAGE="${COA_IMAGE:-$IMAGE_DEFAULT}"
 : "${COA_DB_ROOT_PASSWORD:?empty}"
+: "${COA_SOAP_PASSWORD:?empty}"
+PROXY="${COA_HTTPS_PROXY:-http://127.0.0.1:7890}"
 
 log "pulling ${IMAGE}"
 docker pull "$IMAGE"
@@ -42,8 +46,19 @@ for f in config/modules/*.conf.dist; do
     [ -f "${f%.dist}" ] || cp "$f" "${f%.dist}"
 done
 
+# CoA Bots reads the community talent builds (classId:specId -> talent picks) from
+# CoaBots.TalentBuildsPath.  That file lives in the module repository, not in the
+# image, so keep a copy in config/ and point the module config at it.
+if [ ! -s config/coa-bots-level-builds.json ]; then
+    log "fetching CoA Bots talent builds (reference/ascensionsidekick-level-builds.json)"
+    curl -fsSL -x "$PROXY" -o config/coa-bots-level-builds.json.part \
+        https://raw.githubusercontent.com/Corfirean/mod-coa-playerbots/master/reference/ascensionsidekick-level-builds.json \
+        && mv config/coa-bots-level-builds.json.part config/coa-bots-level-builds.json \
+        || { log "  [warn] download failed - CoaBots.TalentBuildsPath will not resolve"; rm -f config/coa-bots-level-builds.json.part; }
+fi
+
 python3 - <<'PY'
-import pathlib, re
+import os, pathlib, re
 def patch(path, rules):
     f = pathlib.Path(path)
     if not f.exists():
@@ -61,14 +76,26 @@ patch('config/worldserver.conf', [
     (r'^LogsDir\s*=.*$',                  'LogsDir = "/azerothcore/env/dist/logs"'),
     (r'^Updates\.EnableDatabases\s*=.*$', 'Updates.EnableDatabases = 0'),
     (r'^SOAP\.Enabled\s*=.*$',            'SOAP.Enabled = 1'),
+    (r'^SOAP\.Username\s*=.*$',           'SOAP.Username = "coa"'),
+    (r'^SOAP\.Password\s*=.*$',           'SOAP.Password = "%s"' % os.environ['COA_SOAP_PASSWORD']),
+    (r'^SOAP\.Port\s*=.*$',               'SOAP.Port = 7878'),
     (r'^Ra\.Enable\s*=.*$',               'Ra.Enable = 1'),
     (r'^Ra\.IP\s*=.*$',                   'Ra.IP = "0.0.0.0"'),
 ])
 patch('config/authserver.conf', [
     (r'^LogsDir\s*=.*$', 'LogsDir = "/azerothcore/env/dist/logs"'),
 ])
+# CoA Bots: point the module at the talent file in this config directory (mounted at
+# env/dist/etc inside the container) and log existing bots in on every startup.
+# Bots themselves are created with ./botcmd.sh spawnleveled <count>.
+patch('config/modules/mod_coa_playerbots.conf', [
+    (r'^CoaBots\.TalentBuildsPath\s*=.*$',
+     'CoaBots.TalentBuildsPath = "/azerothcore/env/dist/etc/coa-bots-level-builds.json"'),
+    (r'^CoaBots\.AutoLoginOnStartup\s*=.*$', 'CoaBots.AutoLoginOnStartup = 1'),
+])
 PY
 chown -R 1000:1000 config logs 2>/dev/null || true
+chmod 600 config/coa-bots-level-builds.json 2>/dev/null || true
 [ "${1:-deploy}" = config ] && exit 0
 
 # ------------------------------------------------------------------ database

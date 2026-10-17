@@ -68,8 +68,18 @@ ls -l "$CTX" "$CTX/bin"
 
 log "building runtime image coa-server:${TAG}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-cp "$HERE/../entrypoint.sh" "$CTX/entrypoint.sh"
-docker build -f "$HERE/../Dockerfile.runtime" -t "coa-server:${TAG}" -t coa-server:local "$CTX"
+# Works both in the repository layout (coa/fn176/..) and in the flat deployment
+# directory on the host (docker-compose.yml, entrypoint.sh and Dockerfile.runtime
+# side by side).
+if [ -f "$HERE/Dockerfile.runtime" ]; then
+    DOCKERFILE="$HERE/Dockerfile.runtime"; ENTRYPOINT="$HERE/entrypoint.sh"
+else
+    DOCKERFILE="$HERE/../Dockerfile.runtime"; ENTRYPOINT="$HERE/../entrypoint.sh"
+fi
+[ -f "$DOCKERFILE" ]  || { echo "Dockerfile.runtime not found next to $HERE" >&2; exit 1; }
+[ -f "$ENTRYPOINT" ]  || { echo "entrypoint.sh not found next to $HERE" >&2; exit 1; }
+cp "$ENTRYPOINT" "$CTX/entrypoint.sh"
+docker build -f "$DOCKERFILE" -t "coa-server:${TAG}" -t coa-server:local "$CTX"
 
 log "smoke test"
 docker run --rm --entrypoint /azerothcore/env/dist/bin/worldserver coa-server:local --version
