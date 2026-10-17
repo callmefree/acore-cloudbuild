@@ -1,28 +1,21 @@
 #!/usr/bin/env bash
-# Send a console command to the running worldserver.
+# Drive the running worldserver console with a single command.
+# Usage: ./botcmd.sh "botcmd spawnleveled 200"
+#        ./botcmd.sh "account create local local"
+#        ./botcmd.sh "account set gmlevel local 3 -1"
 #
-#   ./botcmd.sh "botcmd spawnleveled 200"
-#   ./botcmd.sh "botcmd spawnrandom 10"
-#   ./botcmd.sh "server info"
-#   ./botcmd.sh "account create local local"
-#   ./botcmd.sh "account set gmlevel local 4 -1"
-#
-# The worldserver container runs with an open stdin and a tty, so its console is
-# driven with `docker attach`.  That needs no SOAP or remote-access credentials
-# (this fork's worldserver.conf has no SOAP.Username/SOAP.Password keys: SOAP and
-# the telnet remote console both authenticate against an auth-database account
-# with a high security level, so create one with the two commands above).
-set -euo pipefail
-cd "$(dirname "$0")"
-
-CMD="${*:?usage: botcmd.sh <console command>}"
-SRV="${COA_WORLD_CONTAINER:-coa-worldserver}"
-WAIT="${COA_CONSOLE_WAIT:-6}"
-TIMEOUT="${COA_CONSOLE_TIMEOUT:-25}"
-
-[ "$(docker inspect -f '{{.State.Running}}' "$SRV" 2>/dev/null || echo no)" = true ] \
-    || { echo "container $SRV is not running" >&2; exit 1; }
-
-# Feed the command, let the server answer, then close the attach.
-{ printf '%s\n' "$CMD"; sleep "$WAIT"; } \
-    | timeout "$TIMEOUT" docker attach --detach-keys='' "$SRV" 2>&1 || true
+# Notes:
+#  * the container runs with tty=true, so stdin must arrive through a PTY
+#    (`script -qec ...`); a plain pipe makes docker attach fail with
+#    "the input device is not a TTY".
+#  * docker attach must use --sig-proxy=false, otherwise the `timeout` kill
+#    (or Ctrl-C) is forwarded to the worldserver process itself.
+#  * the console session has security level 4 (SEC_CONSOLE), so it can only set
+#    account security up to 3; `account set gmlevel <user> 4 -1` is rejected with
+#    "You have low security level for this."
+set -uo pipefail
+CMD="${1:?usage: botcmd.sh \"<console command>\"}"
+WAIT="${COA_CONSOLE_WAIT:-8}"
+TMO="${COA_CONSOLE_TIMEOUT:-30}"
+{ printf '%s\n' "$CMD"; sleep "$WAIT"; } | timeout "$TMO" \
+  script -qec "docker attach --sig-proxy=false --detach-keys='' coa-worldserver" /dev/null || true

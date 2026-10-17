@@ -33,9 +33,10 @@ One image carries three binaries and is role-selected at runtime with
 - **SQUID (`Zyth45/mod-playerbots`) is not built.** The official job builds it
   alongside CoA Bots; the CoA Bots module is the selected bot system, so SQUID
   would only cost build time and a second bot database.
-- **`dbimport` is built** (the official job drops it and ships prepared database
-  baselines instead). Creating the databases from the pinned SQL guarantees the
-  schema matches the exact core revision in the image.
+- **`dbimport` is built** but is *not* how the first database is created (see
+  [Database](#database)). The official job drops `dbimport` entirely and ships
+  prepared database baselines; the fork's raw SQL chain cannot rebuild a consistent
+  database from scratch, so the deployment restores the official dump instead.
 - The build runs **without git** (`-DWITHOUT_GIT=1` + explicit revision build
   args), so `.git` never enters the build context.
 - The CoA Bots characters-database tables ship in `mod-coa-playerbots/dist/sql`
@@ -51,15 +52,17 @@ so a deployment never depends on the registry being reachable.
 
 ## Deploying on fn176
 
-`coa/fn176/` holds the deployment: `docker-compose.yml` (mysql 8.4 +
-one-shot `dbimport` + authserver + worldserver), `config/dbimport.conf`,
-`.env.example` and `deploy.sh`.
+`coa/fn176/` holds the deployment: `docker-compose.yml` (mysql 8.4 + authserver +
+worldserver, with the one-shot `dbimport` behind the `tools` profile),
+`.env.example`, `deploy.sh`, `botcmd.sh`, `build-from-artifact.sh` and
+`dump-official-db.sh`.
 
 ```
 /vol1/1000/docker/coa-fn176/
-  docker-compose.yml   .env        deploy.sh
+  docker-compose.yml   .env   deploy.sh   botcmd.sh
   config/              worldserver.conf, authserver.conf, dbimport.conf, modules/
-  data/                dbc/ maps/ vmaps/ mmaps/ Cameras/   (game data)
+  data/                dbc/ maps/ vmaps/ mmaps/ Cameras/   (game data, symlink -> root/Data)
+  logs/                server logs (bind mount, must stay writable by uid 1000)
 ```
 
 Game data comes from the fork's own signed Windows install package
@@ -71,8 +74,85 @@ the only source of game data that matches CoA Custom 1.7 (395 `dbc` files, plus
 29 k vmaps / 11.9 k maps / 8.5 k mmaps). The third-party `d3athbl0w/CoA-Docker`
 `Data.zip` was built for a different fork and is not used.
 
-`./deploy.sh` pulls the image, seeds and patches `config/`, starts MySQL, runs
-`dbimport`, repoints `acore_auth.realmlist` at `192.168.1.176:8085`, and starts
-both servers.
+### Database
 
-Client: WotLK 3.3.5a with `realmlist.wtf` → `set realmlist 192.168.1.176`.
+**The core SQL chain does not rebuild a working database.** Two independent walls,
+both verified on fn176:
+
+1. `rev_20260930_85_molten_core_boss_kits.sql` (`pending_db_world`) inserts into
+   `coa_boss_schedule` with the column `effect`, but the current module base SQL
+   (`modules/mod-coa-raid-difficulty/data/sql/db-world/base/03_boss_schedule.sql`)
+   already migrated that column to `effect_d0..d3` → `ERROR 1054 (42S22) Unknown
+   column 'effect' in 'field list'`.
+2. Replaying the same chain over the official dump fails the other way round:
+   `Duplicate column name 'senderEntry'` on
+   `data/sql/updates/db_characters/2026_06_24_00.sql` - the dump already contains it.
+
+That is why the official releases ship prepared data (Windows `mysql/data`, Linux
+`Database/baseline/*.sql.zst`) and never replay the SQL.
+
+So the deployment restores the dump taken from the official install-base package:
+
+```
+# once, on fn176 (needs the extracted install-base tree, root/):
+./dump-official-db.sh /vol1/1000/docker/coa-fn176/root baseline-dump.sql.gz
+
+# every deploy:
+COA_DB_BASELINE=baseline-dump.sql.gz ./deploy.sh
+```
+
+`dump-official-db.sh` copies `<repack>/mysql/data`, serves that copy with
+`mysql:8.4 --lower-case-table-names=1 --skip-grant-tables` (the data dictionary was
+created with `lower_case_table_names=1` on Windows; 8.4.11 upgrades the 8.4.9
+dictionary in place) and `mysqldump`s `acore_auth` / `acore_characters` /
+`acore_world` (113 MB gzipped). Because the dump's `updates` tables already record
+the applied SQL, the worldserver runs with `Updates.EnableDatabases = 0` and never
+touches the chain above.
+
+### Console and bots
+
+`worldserver` runs with `tty: true`, so a plain pipe makes `docker attach` fail
+(`the input device is not a TTY`). `botcmd.sh` wraps that in `script -qec` and uses
+`docker attach --sig-proxy=false` so the timeout kill never reaches the server:
+
+```
+./botcmd.sh "account create local local"
+./botcmd.sh "account set gmlevel local 3 -1"     # 4 is refused: the console is SEC_CONSOLE
+./botcmd.sh "botcmd spawnleveled 200"            # CoA Bots, throttled internally
+./botcmd.sh "server info"
+```
+
+`deploy.sh` points `CoaBots.TalentBuildsPath` at
+`/azerothcore/env/dist/etc/coa-bots-level-builds.json` (downloaded from the module
+repository) and sets `CoaBots.AutoLoginOnStartup = 1` with
+`CoaBots.AutoLogin.MaxCount = 200` so a restart does not try to bring 800 bots up at
+once. It also adds the two keys the module reads but its `.conf.dist` does not ship
+(`CoA.CollectionsForBots`, `CoA.RandomBotAccountPrefix`).
+
+### Verified state (fn176, 2026-10-17)
+
+| check | result |
+| --- | --- |
+| image | `coa-server:0.261017.4` (= GHCR `0.261017.2` artifact + `mysql-client` + the duplicate-SQL fix), smoke-tested |
+| containers | `coa-database` (mysql 8.4.11) healthy, `coa-authserver`, `coa-worldserver` up |
+| ports | 3724 auth, 8085 world, 7878 SOAP, 3443 remote console - all listening on 0.0.0.0 |
+| startup | `WORLD: World Initialized In 0 Minutes 20 Seconds`, update diff 3-4 ms, worldserver RSS ~5.2 GB |
+| databases | dump restored; `acore_auth` 22 / `acore_characters` 20 / `acore_world` 3025 applied updates, `coa_boss_schedule` on the `effect_d0..d3` schema |
+| bots | `mod_coa_playerbots.conf` loaded, talent builds loaded (70 builds / 3564 picks), `botcmd spawnleveled` → **195 characters in world**, all 195 re-log in automatically after `docker restart coa-worldserver` |
+| account | `local` / `local`, security 3 (in `acore_auth.account_access`) |
+
+### Known gaps
+
+- The build loses the revision banner: `worldserver --version` prints
+  `rev. unknown 1970-01-01 (Archived branch)`; the `-Drev_*` args only reach the
+  banner when the build runs against a git checkout.
+- Two module config keys are still read by compiled code with no `.conf.dist`
+  entry (worked around by `deploy.sh`, worth reporting upstream).
+- No auto-restart policy was added for a crashed `coa-worldserver` beyond the
+  compose `restart: unless-stopped`.
+- The GHCR package is pullable anonymously, but pulls from fn176 stall on layer
+  `d08df6459be3`; the artifact route (`build-from-artifact.sh`) is what is used.
+
+Client: WotLK 3.3.5a with `realmlist.wtf` → `set realmlist 192.168.1.176`
+(realm address/port in `acore_auth.realmlist` are both set to `192.168.1.176:8085`).
+

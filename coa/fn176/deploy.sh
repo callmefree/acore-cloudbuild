@@ -25,8 +25,12 @@ IMAGE="${COA_IMAGE:-$IMAGE_DEFAULT}"
 : "${COA_SOAP_PASSWORD:?empty}"
 PROXY="${COA_HTTPS_PROXY:-http://127.0.0.1:7890}"
 
-log "pulling ${IMAGE}"
-docker pull "$IMAGE"
+if docker image inspect "$IMAGE" >/dev/null 2>&1 && [ "${COA_FORCE_PULL:-0}" != 1 ]; then
+    log "using local image ${IMAGE} (COA_FORCE_PULL=1 to pull anyway)"
+else
+    log "pulling ${IMAGE}"
+    docker pull "$IMAGE"
+fi
 
 # ------------------------------------------------------------------ configuration
 log "seeding config/ from the image templates (existing files are kept)"
@@ -84,10 +88,32 @@ def patch(path, rules):
     f.write_text(text)
     print('  patched', path)
 
+def ensure(path, pairs):
+    """Add key = value lines that the shipped .conf.dist does not know about yet.
+
+    They are inserted right below the first [worldserver] header so the keys land
+    in the section the module reads.
+    """
+    f = pathlib.Path(path)
+    if not f.exists():
+        print('  [skip]', path); return
+    lines = f.read_text().splitlines()
+    for key, value in pairs:
+        if any(re.match(r'^\s*' + re.escape(key) + r'\s*=', ln) for ln in lines):
+            continue
+        for i, ln in enumerate(lines):
+            if ln.strip().lower() == '[worldserver]':
+                lines.insert(i + 1, f'{key} = {value}')
+                print('  added', key, 'to', path)
+                break
+    f.write_text('\n'.join(lines) + '\n')
+
 # SOAP and the telnet remote console (Ra.*) authenticate against an account in the
 # auth database, not against config keys - this fork's worldserver.conf has neither
 # SOAP.Username nor SOAP.Password.  Create the account with ./botcmd.sh
-# "account create <user> <pass>" and "./botcmd.sh account set gmlevel <user> 4 -1".
+# "account create <user> <pass>" and "./botcmd.sh account set gmlevel <user> 3 -1".
+# (The console session runs at security level 4 - SEC_CONSOLE - so 4 is refused with
+# "You have low security level for this."; 3 = SEC_ADMINISTRATOR is what you want.)
 patch('config/worldserver.conf', [
     (r'^DataDir\s*=.*$',                  'DataDir = "/azerothcore/env/dist/data"'),
     (r'^LogsDir\s*=.*$',                  'LogsDir = "/azerothcore/env/dist/logs"'),
@@ -109,6 +135,14 @@ patch('config/modules/mod_coa_playerbots.conf', [
     (r'^CoaBots\.TalentBuildsPath\s*=.*$',
      'CoaBots.TalentBuildsPath = "/azerothcore/env/dist/etc/coa-bots-level-builds.json"'),
     (r'^CoaBots\.AutoLoginOnStartup\s*=.*$', 'CoaBots.AutoLoginOnStartup = 1'),
+    # a restart replays auto-login; 800 bots at once is far more than fn176 wants
+    (r'^CoaBots\.AutoLogin\.MaxCount\s*=.*$', 'CoaBots.AutoLogin.MaxCount = 200'),
+])
+# Two keys the module reads but its .conf.dist does not ship (upstream gap) - without
+# them the worldserver logs "Config: Missing property ..." on every start.
+ensure('config/modules/mod_coa_playerbots.conf', [
+    ('CoA.CollectionsForBots', '0'),
+    ('CoA.RandomBotAccountPrefix', '"rndbot"'),
 ])
 PY
 chown -R 1000:1000 config logs 2>/dev/null || true
@@ -125,8 +159,25 @@ for _ in $(seq 1 60); do
 done
 echo "database health: ${st:-unknown}"
 
-log "importing databases with dbimport (first run takes a while)"
-docker compose run --rm coa-db-import
+# The supported database source is the pre-built dump that ships with the official
+# install-base package (or linux-unsigned's Database/baseline/*.sql.zst), because the
+# raw core SQL chain does not rebuild a consistent database (see README "Database").
+# COA_DB_SOURCE=dbimport keeps the from-scratch experiment available.
+if [ "${COA_DB_SOURCE:-baseline}" = dbimport ]; then
+    log "importing databases with dbimport (from-scratch, experimental)"
+    docker compose run --rm coa-db-import
+elif [ -n "${COA_DB_BASELINE:-}" ] && [ -r "${COA_DB_BASELINE}" ]; then
+    log "restoring the database baseline from ${COA_DB_BASELINE}"
+    case "$COA_DB_BASELINE" in
+        *.gz)  zcat "$COA_DB_BASELINE" ;;
+        *.zst) zstd -dc "$COA_DB_BASELINE" ;;
+        *)     cat "$COA_DB_BASELINE" ;;
+    esac | docker exec -i coa-database mysql -uroot -p"${COA_DB_ROOT_PASSWORD}" \
+              --max-allowed-packet=1GB
+else
+    log "no database baseline given - keeping the databases as they are"
+    log "set COA_DB_BASELINE=<dump.sql[.gz|.zst]> (see README, dump-official-db.sh)"
+fi
 
 # The CoA Bots module keeps these two character tables in its release payload
 # (dist/sql/...) rather than in module/src/data/sql, so dbimport never sees them.

@@ -3,13 +3,22 @@
 #
 # Layout on the host (/vol1/1000/docker/coa-fn176):
 #   docker-compose.yml  this file
-#   .env                secrets + image tag   (not committed)
+#   .env                secrets + image tag    (not committed)
 #   config/             worldserver.conf, authserver.conf, dbimport.conf, modules/
-#   data/               game data: dbc/ maps/ vmaps/ mmaps/ Cameras/
-#   logs/               server logs (named volume coa-logs by default)
+#   data/               game data (symlink -> root/Data): dbc/ maps/ vmaps/ mmaps/ Cameras/
+#   logs/               server logs, bind mount (must be writable by uid 1000)
+#   botcmd.sh           drive the worldserver console (docker attach through a PTY)
 #
-# Start:  docker compose up -d
-# Roles:  the same image runs dbimport (one shot), then authserver + worldserver.
+# Start:   docker compose up -d                       # authserver + worldserver (+ database)
+# Console: ./botcmd.sh "botcmd spawnleveled 200"
+# dbimport: docker compose run --rm coa-db-import     # only for a from-scratch build, see README
+#
+# NOTE: coa-db-import is behind the "tools" profile on purpose. The official CoA
+# distribution does not replay the core SQL chain into an empty database (the chain
+# contains updates that no longer match the current module base schema), so the
+# supported database source is the pre-built dump that ships with the official
+# install-base package -- see README.md ("Database"). dbimport stays available for
+# experiments, but must not gate authserver/worldserver startup.
 
 name: coa
 
@@ -40,9 +49,10 @@ services:
       retries: 60
       start_period: 30s
 
-  # One-shot: creates acore_auth / acore_characters / acore_world from the SQL that
-  # is baked into the image (core data/sql + every module's data/sql, modules included).
+  # Expert/experimental path only (profile "tools"): builds the three databases from
+  # the SQL baked into the image (core data/sql + every module's data/sql).
   coa-db-import:
+    profiles: ["tools"]
     image: ${COA_IMAGE:-ghcr.io/callmefree/coa-server:latest}
     container_name: coa-db-import
     restart: "no"
@@ -51,9 +61,10 @@ services:
       <<: *server-env
       ACORE_COMPONENT: dbimport
       AC_FORCE_CREATE_DB: "1"
+      AC_DISABLE_INTERACTIVE: "1"
     volumes:
       - ./config:/azerothcore/env/dist/etc
-      - coa-logs:/azerothcore/env/dist/logs
+      - ./logs:/azerothcore/env/dist/logs
     depends_on:
       coa-database:
         condition: service_healthy
@@ -69,14 +80,12 @@ services:
       ACORE_COMPONENT: authserver
     volumes:
       - ./config:/azerothcore/env/dist/etc
-      - coa-logs:/azerothcore/env/dist/logs
+      - ./logs:/azerothcore/env/dist/logs
     ports:
       - "${COA_AUTH_EXTERNAL_PORT:-3724}:3724"
     depends_on:
       coa-database:
         condition: service_healthy
-      coa-db-import:
-        condition: service_completed_successfully
     networks: [coa]
 
   coa-worldserver:
@@ -91,7 +100,7 @@ services:
       ACORE_COMPONENT: worldserver
     volumes:
       - ./config:/azerothcore/env/dist/etc
-      - coa-logs:/azerothcore/env/dist/logs
+      - ./logs:/azerothcore/env/dist/logs
       - ./data:/azerothcore/env/dist/data:ro
     ports:
       - "${COA_WORLD_EXTERNAL_PORT:-8085}:8085"
@@ -100,8 +109,6 @@ services:
     depends_on:
       coa-database:
         condition: service_healthy
-      coa-db-import:
-        condition: service_completed_successfully
     networks: [coa]
 
 volumes:
