@@ -221,6 +221,44 @@ docker exec coa-database mysql -uroot -p"${COA_DB_ROOT_PASSWORD}" -e \
       WHERE id=1;
      SELECT id, name, address, port, flag FROM acore_auth.realmlist;"
 
+# ------------------------------------------------------------------ register site
+# The account-registration page used to run on the old server
+# (192.168.1.89 C:\COA\CoA-Repack\WebRegister).  It now runs here as its own
+# container and writes SRP6 salt/verifier straight into acore_auth.account, so the
+# accounts it creates exist on THIS realm.  It uses a dedicated least-privilege MySQL
+# account; the two coa_qq_* tables it creates on first start need CREATE/ALTER.
+if [ "${COA_REGISTER_ENABLE:-1}" = 1 ]; then
+    log "preparing the account-registration service (coa-register)"
+    settings=webregister/context/Settings
+    if [ ! -s "$settings/database.json" ]; then
+        mkdir -p "$settings"
+        printf '{\n  "appUser": "acore",\n  "appPassword": "%s"\n}\n' "$(openssl rand -hex 12)" \
+            > "$settings/database.json"
+        chmod 600 "$settings/database.json"
+    fi
+    printf '{\n  "mysqlHost": "coa-database",\n  "mysqlPort": 3306,\n  "authPort": %s,\n  "worldPort": %s,\n  "realmAddress": "%s"\n}\n' \
+        "${COA_AUTH_EXTERNAL_PORT:-3724}" "${COA_WORLD_EXTERNAL_PORT:-8085}" "$COA_REALM_ADDRESS" \
+        > "$settings/repack.json"
+    APP_PW="$(python3 -c "import json;print(json.load(open('$settings/database.json'))['appPassword'])")"
+    docker exec -i coa-database mysql -uroot -p"${COA_DB_ROOT_PASSWORD}" <<SQL
+CREATE USER IF NOT EXISTS 'acore'@'%' IDENTIFIED BY '${APP_PW}';
+ALTER USER 'acore'@'%' IDENTIFIED BY '${APP_PW}';
+GRANT SELECT, INSERT, UPDATE, DELETE ON acore_auth.* TO 'acore'@'%';
+GRANT SELECT ON acore_characters.* TO 'acore'@'%';
+GRANT CREATE, ALTER, INDEX, DROP ON acore_auth.* TO 'acore'@'%';
+FLUSH PRIVILEGES;
+SQL
+    if [ -s webregister/context/WebRegister/register_server.py ]; then
+        docker compose build coa-register
+    else
+        log "  [warn] webregister/context/WebRegister/register_server.py missing - coa-register cannot build"
+    fi
+    # Public ingress stays off on purpose: the site becomes reachable only after the
+    # cutover, when the "tunnel" profile is started and the VPS nginx vhost proxies
+    # to the frps port this frpc publishes.  See README "Register site".
+    [ -s frpc.toml ] && log "  frpc.toml found - start ingress with: docker compose --profile tunnel up -d coa-frpc"
+fi
+
 # ------------------------------------------------------------------ servers
 log "starting authserver + worldserver"
 docker compose up -d

@@ -173,6 +173,49 @@ on SIGTERM).
 tail -f logs/watchdog.log logs/backup.log
 ```
 
+### Register site (moved off the old server)
+
+The account-registration page that used to run on `192.168.1.89`
+(`C:\COA\CoA-Repack\WebRegister\register_server.py`) now runs on fn176 as the
+`coa-register` container: python 3.12 + pymysql + pillow, with `webregister/context/`
+holding the upstream service, `index.html` and the `Settings/` files it reads at
+startup. It talks to `coa-database` through a dedicated least-privilege MySQL account
+(`acore`: SELECT/INSERT/UPDATE/DELETE on `acore_auth`, SELECT on `acore_characters`,
+plus CREATE/ALTER/INDEX/DROP on `acore_auth` for the two `coa_qq_*` tables it creates)
+and writes SRP6 `salt`/`verifier` rows straight into `acore_auth.account` - so accounts
+it creates exist on **this** realm.
+
+Local changes to `register_server.py` (the rest is upstream):
+
+- `load_config()` accepts an optional `repack.json → mysqlHost` and
+  `database.json → appUser` (defaults stay `127.0.0.1` / `acore`);
+- the probe used by `realm_has_character()` is qualified as
+  `acore_characters.characters` - the bare table name resolved against `acore_auth`,
+  and the exception was swallowed, so it always returned 0.
+
+```
+curl -s localhost:8090/health                                   # {"status": "ok"}
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8090/captcha  # 200 (image/png)
+```
+
+#### Cutover to the public hostname (planned, not yet executed)
+
+Players keep using `https://register.soulcore.asia`; only the VPS side changes:
+
+1. add the frpc remote port to the VPS `allowPorts` (`{ start = 8091, end = 8091 }`)
+   and `systemctl restart frps` (a few seconds of tunnel downtime; `loginFailExit = false`
+   makes the old server reconnect by itself);
+2. on fn176: `docker compose --profile tunnel up -d coa-frpc` - publishes
+   `coa-register-8091` to the register container;
+3. point the nginx vhost `register.soulcore.asia` from
+   `proxy_pass http://127.0.0.1:8090` to `http://127.0.0.1:8091`, then
+   `nginx -t && systemctl reload nginx`. Rollback is the same edit in reverse.
+
+Do **not** move the register site ahead of the game: an account created on the new site
+lands in the new `acore_auth` and cannot log in while the old server still serves
+players. Register site, the game tunnels (3724/8085) and the player-data import belong
+to one maintenance window.
+
 ### Legacy CoA deployment still running on 192.168.1.89
 
 The previous (Windows) CoA server is untouched and still self-healing; it is useful as
@@ -189,6 +232,22 @@ a data/history source:
   91 MB, plus `2026-09-26-pre-routeB-forked-world.sql`, 514 MB), `文档/`
   (`CoA注册网页-部署与运维.md`, `CoA反代迁移-20261011.md`,
   `CoA外网开服-成功方案（权威版）.md`, ...), `脚本/` (`coa_backup.py`, task XMLs).
+- Game database: MySQL 8.4 on `127.0.0.1:3307` (`C:\COA\CoA-Repack\mysql`), four
+  schemas `acore_auth` / `acore_characters` / `acore_playerbots` / `acore_world`;
+  `mysql/bin/mysqldump.exe` is present, so a fresh export only needs an execution
+  channel. `文档\`/`脚本\` also carry the ops tooling (`coa_ops_gateway.py`,
+  scheduled tasks `CoA-Server-Stack`, `CoA-Register`, `CoA-frpc`, watchdogs).
+- Remote access without RDP: the SMB **administrator share** (`C$`) plus remote
+  `schtasks /s 192.168.1.89 /u administrator` is the intended path - measured working
+  for reads, but the local `administrator` account is currently **locked out** from
+  repeated authentication attempts. The ops gateway `http://192.168.1.89:18930`
+  (`X-CoA-Token`) stays usable: status, logs, logs/tail, read/ls/grep, read-only SQL
+  (500 rows) and a whitelist of idempotent actions - **no shell, so it cannot run
+  mysqldump**.
+- ⚠ Security findings on the legacy host, none of them fixed yet: the `COA` share is
+  readable **and writable by anonymous/guest**, `C:\COA\脚本\gh_token.txt` holds a
+  plaintext GitHub PAT, and the ops-gateway tokens (`C:\COA\脚本\.secrets\gateway.json`)
+  were exposed while reading that file - rotate both tokens and tighten the share.
 
 ### Verified state (fn176, 2026-10-17)
 
@@ -203,6 +262,7 @@ a data/history source:
 | account | `local` / `local`, security 3 (in `acore_auth.account_access`) |
 | warnings | 0 `Missing property` lines after merging `extra-config.conf` (was ~140) |
 | self-healing | `watchdog.sh` cron active (heartbeat in `logs/watchdog.log`), `backup-db.sh` snapshot verified (109 MB gz, sha256, 22 s) |
+| register site | `coa-register` up on 8090; `/health` ok, `/captcha` = 190x58 PNG, `create_account()` self-test wrote a 32-byte salt/verifier into the new `acore_auth` (test row deleted again) |
 
 ### Known gaps
 
@@ -216,6 +276,15 @@ a data/history source:
   `rev_20260930_85_molten_core_boss_kits.sql`.
 - No real 3.3.5a client has logged in through the tunnel yet - only port/realmlist
   checks.
+- The public ingress is still the old server: `register.soulcore.asia` and the
+  3724/8085 tunnels point at `192.168.1.89`. The fn176 side is ready
+  (`frpc.toml` rendered, `coa-frpc` behind the `tunnel` profile); the cutover needs the
+  VPS changes above **and** the old host to release those ports.
+- The player-data import is written and dry-run clean
+  (`import-legacy-players.sh`: 111 accounts / 1578 characters / 23 guilds / 0 orphans
+  into a copy of the live database) but has not been applied to the live one, and the
+  newest available dump is from 2026-09-26 - a fresh export needs the locked-out
+  `administrator` account on `192.168.1.89`.
 
 Client: WotLK 3.3.5a with `realmlist.wtf` → `set realmlist 192.168.1.176`
 (realm address/port in `acore_auth.realmlist` are both set to `192.168.1.176:8085`).

@@ -130,6 +130,44 @@ services:
       retries: 3
       start_period: 180s
 
+  # Player registration site: the service that used to run on the old server
+  # (192.168.1.89, C:\COA\CoA-Repack\WebRegister). It talks to MySQL directly and
+  # writes SRP6 salt/verifier into acore_auth.account, so accounts it creates exist
+  # on THIS realm. Source lives in ./webregister (Dockerfile + context/).
+  coa-register:
+    image: coa-register:local
+    build:
+      context: ./webregister
+    container_name: coa-register
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "${COA_REGISTER_EXTERNAL_PORT:-8090}:8090"
+    depends_on:
+      coa-database:
+        condition: service_healthy
+    networks: [coa]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # frp client (profile "tunnel"): publishes the register site as
+  # soulcore.asia:<COA_FRP_REGISTER_REMOTE_PORT> so players keep using
+  # https://register.soulcore.asia. off until the cutover.
+  coa-frpc:
+    profiles: ["tunnel"]
+    image: snowdreamtech/frpc:latest
+    container_name: coa-frpc
+    restart: unless-stopped
+    volumes:
+      - ./frpc.toml:/etc/frp/frpc.toml:ro
+    depends_on: [coa-register]
+    networks: [coa]
+
 volumes:
   coa-db-data:
   coa-logs:

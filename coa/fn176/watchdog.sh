@@ -20,8 +20,10 @@ DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
 # Containers we own. coa-db-import is deliberately absent: it is a "tools" profile
-# one-shot job that is expected to exit.
-CONTAINERS=(coa-database coa-authserver coa-worldserver)
+# one-shot job that is expected to exit. coa-frpc is absent too: it lives in the
+# "tunnel" profile, and after the cutover a tunnel outage is not worth a restart loop
+# (frpc reconnects by itself, loginFailExit = false).
+CONTAINERS=(coa-database coa-authserver coa-worldserver coa-register)
 UNHEALTHY_STRIKES="${COA_WATCHDOG_STRIKES:-2}"   # consecutive unhealthy probes before restart
 STRIKE_DIR="${COA_WATCHDOG_STATE:-$DIR/.watchdog}"
 
