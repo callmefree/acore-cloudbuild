@@ -162,9 +162,12 @@ services:
   # frp client (profile "tunnel"): publishes the register site as
   # soulcore.asia:<COA_FRP_REGISTER_REMOTE_PORT> so players keep using
   # https://register.soulcore.asia. off until the cutover.
+  # The image is built locally from the official frp v0.71.0 linux binary
+  # (matches the frps version on the VPS) because Docker Hub pulls on fn176
+  # crawl: see frpc-build/Dockerfile + build-frpc.sh.
   coa-frpc:
     profiles: ["tunnel"]
-    image: snowdreamtech/frpc:latest
+    image: coa-frpc:local
     container_name: coa-frpc
     restart: unless-stopped
     volumes:

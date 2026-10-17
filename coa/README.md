@@ -198,28 +198,68 @@ curl -s localhost:8090/health                                   # {"status": "ok
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8090/captcha  # 200 (image/png)
 ```
 
-#### Cutover to the public hostname (planned, not yet executed)
+#### Cutover to the public hostname (done 2026-10-17 21:21)
 
-Players keep using `https://register.soulcore.asia`; only the VPS side changes:
+Players keep using `https://register.soulcore.asia` and nothing on the VPS changed. The
+old server's frp proxies were released and fn176's `coa-frpc` bound the **same** remote
+ports (3724 / 8085 / 8090, already in the VPS `allowPorts`), so nginx still proxies to
+`127.0.0.1:8090` - only the tunnel endpoint moved:
 
-1. add the frpc remote port to the VPS `allowPorts` (`{ start = 8091, end = 8091 }`)
-   and `systemctl restart frps` (a few seconds of tunnel downtime; `loginFailExit = false`
-   makes the old server reconnect by itself);
-2. on fn176: `docker compose --profile tunnel up -d coa-frpc` - publishes
-   `coa-register-8091` to the register container;
-3. point the nginx vhost `register.soulcore.asia` from
-   `proxy_pass http://127.0.0.1:8090` to `http://127.0.0.1:8091`, then
-   `nginx -t && systemctl reload nginx`. Rollback is the same edit in reverse.
+```
+internet -> soulcore.asia:8090 (nginx 443) -> frps :8090 -> frpc on fn176 -> coa-register
+           soulcore.asia:3724 -> frps :3724 -> frpc -> coa-authserver
+           soulcore.asia:8085 -> frps :8085 -> frpc -> coa-worldserver
+```
 
-Do **not** move the register site ahead of the game: an account created on the new site
-lands in the new `acore_auth` and cannot log in while the old server still serves
-players. Register site, the game tunnels (3724/8085) and the player-data import belong
-to one maintenance window.
+Evidence:
 
-### Legacy CoA deployment still running on 192.168.1.89
+```
+# fn176
+login to server success / proxy added: [coa-auth-3724 coa-register-8090 coa-world-8085]
+start proxy success            (all three)
+# VPS frps
+[coa-auth-3724] tcp proxy listen port [3724] / new proxy success   (same for 8085, 8090)
+# public
+https://register.soulcore.asia/       -> 200, the registration page
+https://register.soulcore.asia/health -> {"status": "ok"}
+soulcore.asia:3724 -> AUTH_LOGON_CHALLENGE (opcode 0x00, 119 bytes) for account LOCAL
+```
 
-The previous (Windows) CoA server is untouched and still self-healing; it is useful as
-a data/history source:
+The frpc image is built locally instead of pulled: Docker Hub pulls on fn176 crawl at
+~50 kB/s, so `frpc-build/build-frpc.sh` fetches the official frp **v0.71.0** release
+binary (same version as the VPS frps) and builds `coa-frpc:local`, which is what the
+compose service uses.
+
+Order used - one window, no split state:
+
+1. freeze writes: fresh `mysqldump` of `acore_auth` + `acore_characters` on the old host
+   through the temporary share-write channel, then `./import-legacy-players.sh` into the
+   live new database (the script snapshots it first);
+2. stop the old stack gracefully (`manage.py stop-all` - characters are saved first) and
+   disable its scheduled tasks, which releases 3724/8085/8090 on the VPS;
+3. `docker compose --profile tunnel up -d coa-frpc` on fn176, then verify from outside.
+
+Rollback: re-enable the old host's tasks and start its stack - both hosts cannot hold the
+same remote ports, so only one of them can serve the realm at a time.
+
+### Legacy CoA deployment on 192.168.1.89 (stopped, kept as a cold backup)
+
+The previous (Windows) CoA server was stopped cleanly during the cutover
+(`manage.py stop-all` saved the characters first: `Graceful world shutdown requested.` /
+`All services from this repack are stopped.`) and its seven scheduled tasks -
+`CoA-Server-Stack`, `CoA-Bots-Stack`, `CoA-AuthWatchdog`, `CoA-WorldWatchdog`,
+`CoA-MySQLWatchdog`, `CoA-Register`, `CoA-frpc` - are disabled. It therefore holds no
+public ports and no longer self-heals; all six of its local ports (3307/3724/8085/8090/
+3443/8088) are closed and no process of the stack is running. It is kept as a
+data/history source and as a rollback target:
+
+- restart it: `schtasks /change /tn "\CoA-<name>" /enable` for those seven tasks, then
+  start the stack again. The two `CoA-OpsGateway*` tasks were deliberately left enabled,
+  so the ops gateway and the share-write channel still work;
+- a copy of the exported player data is on its share in `C:\COA\_staging\fresh-players\`
+  and on fn176 in `legacy/fresh/`.
+
+The rest of this section describes the host as it was found:
 
 - Windows host `192.168.1.89`, SMB share **`COA` readable anonymously** (`smbclient
   //192.168.1.89/COA -N`), RDP 3389; the game itself lives in `C:\COA\CoA-Repack`.
@@ -263,6 +303,9 @@ a data/history source:
 | warnings | 0 `Missing property` lines after merging `extra-config.conf` (was ~140) |
 | self-healing | `watchdog.sh` cron active (heartbeat in `logs/watchdog.log`), `backup-db.sh` snapshot verified (109 MB gz, sha256, 22 s) |
 | register site | `coa-register` up on 8090; `/health` ok, `/captcha` = 190x58 PNG, `create_account()` self-test wrote a 32-byte salt/verifier into the new `acore_auth` (test row deleted again) |
+| cutover | public ingress moved to fn176: `coa-frpc` (profile `tunnel`, image `coa-frpc:local` = official frp v0.71.0) owns the VPS ports 3724/8085/8090; `https://register.soulcore.asia/` = 200, `/health` = ok, and `soulcore.asia:3724` answered a real 3.3.5a `AUTH_LOGON_CHALLENGE` (0x00) for account `LOCAL` |
+| player data | legacy `acore_auth` + `acore_characters` (exported 2026-10-17 20:51) imported: 202 accounts / 3369 characters / 23 guilds / 0 orphans, top characters level 80; `LOCAL`/`local` GM (security 3) works against the imported SRP6 verifier |
+| bots after import | `botcmd spawnleveled 200` -> 195 characters in world, 5.55 GB RSS, update diff 5 ms, 3569 characters total |
 
 ### Known gaps
 
@@ -274,18 +317,19 @@ a data/history source:
 - The database can only come from an official pre-built dump; the from-scratch SQL
   chain (`COA_DB_SOURCE=dbimport`) still fails on the stale
   `rev_20260930_85_molten_core_boss_kits.sql`.
-- No real 3.3.5a client has logged in through the tunnel yet - only port/realmlist
-  checks.
-- The public ingress is still the old server: `register.soulcore.asia` and the
-  3724/8085 tunnels point at `192.168.1.89`. The fn176 side is ready
-  (`frpc.toml` rendered, `coa-frpc` behind the `tunnel` profile); the cutover needs the
-  VPS changes above **and** the old host to release those ports.
-- The player-data import is written and dry-run clean
-  (`import-legacy-players.sh`: 111 accounts / 1578 characters / 23 guilds / 0 orphans
-  into a copy of the live database) but has not been applied to the live one, and the
-  newest available dump is from 2026-09-26 - a fresh export needs the locked-out
-  `administrator` account on `192.168.1.89`.
+- No real 3.3.5a client has connected end-to-end yet; the logon handshake and both game
+  tunnels are verified from outside the LAN, but nobody has reached the character screen.
+- The imported data still carries 3234 legacy SQUID bot characters (`RNDBOT*` accounts,
+  ~91% of the character table); only 135 characters belong to real players, and the
+  legacy bots have no AI under this module. Purging them is a separate, destructive call.
+- The old host is stopped but not decommissioned, and the security findings on it are
+  unchanged by decision of the operator (the `COA` share stays anonymously writable, its
+  GitHub PAT and gateway tokens were not rotated). The temporary channel used for the
+  export was cleaned up: `C:\COA\脚本\coa_dsh_share_sync.py` was restored byte-exact
+  (18034 bytes, sha256 `BEE23D79...ABBC42`) and the token-bearing worker and probe file
+  were deleted.
 
-Client: WotLK 3.3.5a with `realmlist.wtf` → `set realmlist 192.168.1.176`
-(realm address/port in `acore_auth.realmlist` are both set to `192.168.1.176:8085`).
+Client: WotLK 3.3.5a with `realmlist.wtf` → `set realmlist soulcore.asia`
+(realm address/port in `acore_auth.realmlist` are `soulcore.asia:8085`, exactly as the
+legacy dump had them; LAN players can still use `192.168.1.176`).
 
