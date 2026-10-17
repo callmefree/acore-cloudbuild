@@ -183,6 +183,25 @@ shortcut: a plain TCP connect to `soulcore.asia:8085` must answer with a 44-byte
 `SMSG_AUTH_CHALLENGE` (`002a ec01 01000000 <32-byte seed>`) - if it does, the tunnel and
 the worldserver are fine and the remaining fault is the opcode/compat gate above.
 
+There is a second half to the same gate. Upstream commit `2d13ffd73a` (2026-09-28,
+"talk to the client through native Extensions.dll packets only") removed
+`CoA.PlaintextWorldHeaders`, so the socket always initialises the header cipher. Clients
+that still run the **original** `Extensions.dll` keep sending world headers
+*unencrypted*, so they authenticate and are then dropped a few seconds later:
+
+```
+WorldSocket::ReadHeaderHandler(): client 172.26.0.6 sent malformed packet
+  (raw: 000CDC010000, cryptInitialized: true, size: 61231, cmd: 380357472)
+```
+
+(`raw: 000CDC010000` is the plaintext header of a 12-byte `CMSG_PING`, `cmd = 0x01DC`.)
+Upstream re-added the option in `00fbffd1d4` and reverted it 11 minutes later in
+`504fa66b83`, so the branch we build from does not have it. The workflow re-applies
+exactly those edits with `coa/patches/apply-plaintext-headers.py` (anchored string
+replacements with hard asserts, not `git apply`) and `extra-config.conf` sets
+`CoA.PlaintextWorldHeaders = 1`. Set it to `0` only after every player runs the
+reconstructed Extensions.dll client.
+
 ### Self-healing and database snapshots
 
 `restart: unless-stopped` only covers a process that dies. Two extra layers, both

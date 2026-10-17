@@ -122,6 +122,18 @@ jobs:
           printf '.git\n' > _core/.dockerignore
           du -sh _core
 
+      - name: Restore the plaintext world-header compatibility (original Extensions.dll clients)
+        run: |
+          set -euo pipefail
+          # Upstream dropped CoA.PlaintextWorldHeaders in 2d13ffd73a (2026-09-28) and reverted
+          # the option that brought it back (00fbffd1d4 -> 504fa66b83), so the branch we build
+          # from rejects clients that still run the original Extensions.dll: their world
+          # headers are unencrypted, the server decrypts garbage and drops them ~5s after
+          # login ("sent malformed packet" / client shows "connection to the server failed").
+          # See coa/patches/apply-plaintext-headers.py for the full rationale.
+          python3 _core/coa/patches/apply-plaintext-headers.py _core
+          git -C _core --no-pager diff --stat
+
       - name: Record the pinned revisions
         id: pins
         run: |
