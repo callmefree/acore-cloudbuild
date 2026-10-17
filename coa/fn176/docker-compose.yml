@@ -142,6 +142,10 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+    volumes:
+      # mount the settings instead of baking them into the image, so the db
+      # credentials / realm address can change without a rebuild
+      - ./webregister/context/Settings:/app/Settings:ro
     ports:
       - "${COA_REGISTER_EXTERNAL_PORT:-8090}:8090"
     depends_on:
