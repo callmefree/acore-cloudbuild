@@ -340,9 +340,19 @@ The rest of this section describes the host as it was found:
   GitHub PAT and gateway tokens were not rotated). The temporary channel used for the
   export was cleaned up: `C:\COA\脚本\coa_dsh_share_sync.py` was restored byte-exact
   (18034 bytes, sha256 `BEE23D79...ABBC42`) and the token-bearing worker and probe file
-  were deleted. **Before that host is retired**, archive the one asset that has no copy
-  anywhere else: its MySQL datadir holds the SQUID-only database `acore_playerbots`
-  (the exported dumps cover `acore_auth` + `acore_characters` only).
+  were deleted. The SQUID-only database `acore_playerbots` was archived before retirement
+  (2026-10-17): `legacy/squid/acore_playerbots-20261017-215631.sql.gz` (22,771,733 bytes,
+  sha256 `fddb99814b68bd50db3376db871b2d766101a3291d9db4fb105cf3121e6bf7e3`, 62 MB raw,
+  31 tables — `playerbots_travelnode_path` 1,404,959 rows, `playerbots_rnditem_cache` 138,974,
+  `playerbots_travelnode_link` 15,041, `playerbots_bis_gear` 6,647, `playerbots_travelnode` 3,781,
+  `playerbots_random_bots` 3,541, `playerbots_account_type` **154** = exactly the 154 `RNDBOT*`
+  accounts, which is the mapping proof) plus
+  `legacy/squid/acore_characters-playerbots-tables-20261017-215631.sql.gz` (642,579 bytes,
+  sha256 `cbde728e20685e616153760d564f63672127c288609799ca8521db612c6a3046`:
+  `playerbots_names` 100000, `playerbots_guild_names` 400, `playerbots_arena_team_names` 300).
+  Both dumps were loaded into a scratch MySQL 8.4 to prove they restore; the archive was taken
+  over the temporary SYSTEM channel, MySQL was stopped again afterwards and the host was left
+  exactly as found (ports 3307/3724/8085/8090 all closed, no residue).
 
 Client: WotLK 3.3.5a with `realmlist.wtf` → `set realmlist soulcore.asia`
 (realm address/port in `acore_auth.realmlist` are `soulcore.asia:8085`, exactly as the
