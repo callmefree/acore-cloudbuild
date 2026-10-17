@@ -1,0 +1,113 @@
+# fn176 deployment for the CoA server image built by
+# .github/workflows/coa-linux-image.yml (ghcr.io/callmefree/coa-server).
+#
+# Layout on the host (/vol1/1000/docker/coa-fn176):
+#   docker-compose.yml  this file
+#   .env                secrets + image tag   (not committed)
+#   config/             worldserver.conf, authserver.conf, dbimport.conf, modules/
+#   data/               game data: dbc/ maps/ vmaps/ mmaps/ Cameras/
+#   logs/               server logs (named volume coa-logs by default)
+#
+# Start:  docker compose up -d
+# Roles:  the same image runs dbimport (one shot), then authserver + worldserver.
+
+name: coa
+
+x-server-env: &server-env
+  AC_DATA_DIR: /azerothcore/env/dist/data
+  AC_LOGS_DIR: /azerothcore/env/dist/logs
+  AC_TEMP_DIR: /azerothcore/env/dist/temp
+  AC_LOGIN_DATABASE_INFO: "coa-database;3306;root;${COA_DB_ROOT_PASSWORD};acore_auth"
+  AC_WORLD_DATABASE_INFO: "coa-database;3306;root;${COA_DB_ROOT_PASSWORD};acore_world"
+  AC_CHARACTER_DATABASE_INFO: "coa-database;3306;root;${COA_DB_ROOT_PASSWORD};acore_characters"
+
+services:
+  coa-database:
+    image: mysql:8.4
+    container_name: coa-database
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${COA_DB_ROOT_PASSWORD:?set COA_DB_ROOT_PASSWORD in .env}
+    volumes:
+      - coa-db-data:/var/lib/mysql
+    ports:
+      - "${COA_DB_EXTERNAL_PORT:-3307}:3306"
+    networks: [coa]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
+
+  # One-shot: creates acore_auth / acore_characters / acore_world from the SQL that
+  # is baked into the image (core data/sql + every module's data/sql, modules included).
+  coa-db-import:
+    image: ${COA_IMAGE:-ghcr.io/callmefree/coa-server:latest}
+    container_name: coa-db-import
+    restart: "no"
+    command: ["dbimport"]
+    environment:
+      <<: *server-env
+      ACORE_COMPONENT: dbimport
+      AC_FORCE_CREATE_DB: "1"
+    volumes:
+      - ./config:/azerothcore/env/dist/etc
+      - coa-logs:/azerothcore/env/dist/logs
+    depends_on:
+      coa-database:
+        condition: service_healthy
+    networks: [coa]
+
+  coa-authserver:
+    image: ${COA_IMAGE:-ghcr.io/callmefree/coa-server:latest}
+    container_name: coa-authserver
+    restart: unless-stopped
+    command: ["authserver"]
+    environment:
+      <<: *server-env
+      ACORE_COMPONENT: authserver
+    volumes:
+      - ./config:/azerothcore/env/dist/etc
+      - coa-logs:/azerothcore/env/dist/logs
+    ports:
+      - "${COA_AUTH_EXTERNAL_PORT:-3724}:3724"
+    depends_on:
+      coa-database:
+        condition: service_healthy
+      coa-db-import:
+        condition: service_completed_successfully
+    networks: [coa]
+
+  coa-worldserver:
+    image: ${COA_IMAGE:-ghcr.io/callmefree/coa-server:latest}
+    container_name: coa-worldserver
+    restart: unless-stopped
+    command: ["worldserver"]
+    stdin_open: true
+    tty: true
+    environment:
+      <<: *server-env
+      ACORE_COMPONENT: worldserver
+    volumes:
+      - ./config:/azerothcore/env/dist/etc
+      - coa-logs:/azerothcore/env/dist/logs
+      - ./data:/azerothcore/env/dist/data:ro
+    ports:
+      - "${COA_WORLD_EXTERNAL_PORT:-8085}:8085"
+      - "${COA_SOAP_EXTERNAL_PORT:-7878}:7878"
+      - "${COA_RA_EXTERNAL_PORT:-3443}:3443"
+    depends_on:
+      coa-database:
+        condition: service_healthy
+      coa-db-import:
+        condition: service_completed_successfully
+    networks: [coa]
+
+volumes:
+  coa-db-data:
+  coa-logs:
+
+networks:
+  coa:
+    name: coa

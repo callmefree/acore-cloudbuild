@@ -1,0 +1,221 @@
+name: coa-linux-image
+
+# Cloud build of the Conquest of Azeroth (CoA) Linux server image.
+#
+# Builds Corfirean/azerothcore-wotlk-coa (coa-bots) together with the CoA Bots
+# playerbots module and the Content Scaling module, exactly the way the fork's
+# own Linux release job (Corfirean/coa-server-build, .github/workflows/build-linux.yml)
+# wires them together, then publishes one image that can run as
+# worldserver, authserver or dbimport.
+#
+# The compiled binaries are also uploaded as a workflow artifact so the server
+# can be deployed without a registry.
+#
+# Deliberate deviation from the official job: Corfirean/mod-playerbots (SQUID) is
+# NOT built.  The CoA Bots module is the selected bot system and SQUID installs
+# disabled; add the checkout + placement below if both are ever wanted.
+
+on:
+  workflow_dispatch:
+    inputs:
+      core_ref:
+        description: 'Corfirean/azerothcore-wotlk-coa ref (branch, tag or SHA)'
+        default: 'coa-bots'
+        type: string
+      bots_ref:
+        description: 'Corfirean/mod-coa-playerbots ref'
+        default: 'master'
+        type: string
+      scaling_ref:
+        description: 'Corfirean/mod-coa-content-scaling ref'
+        default: 'main'
+        type: string
+      image_tag:
+        description: 'Extra image tag (default 0.<yyMMdd>.<run_number>)'
+        default: ''
+        type: string
+      push_image:
+        description: 'Push the image to ghcr.io/callmefree/coa-server'
+        default: true
+        type: boolean
+      strip_binaries:
+        description: 'Strip debug information from worldserver/authserver/dbimport'
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
+concurrency:
+  group: coa-linux-image
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/callmefree/coa-server
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Checkout build recipes (this repository)
+        uses: actions/checkout@v4
+        with:
+          path: _recipes
+
+      - name: Checkout core (CoA fork)
+        uses: actions/checkout@v4
+        with:
+          repository: Corfirean/azerothcore-wotlk-coa
+          ref: ${{ inputs.core_ref }}
+          path: _core
+          fetch-depth: 1
+
+      - name: Checkout CoA Bots module
+        uses: actions/checkout@v4
+        with:
+          repository: Corfirean/mod-coa-playerbots
+          ref: ${{ inputs.bots_ref }}
+          path: _bots
+          fetch-depth: 1
+
+      - name: Checkout Content Scaling module
+        uses: actions/checkout@v4
+        with:
+          repository: Corfirean/mod-coa-content-scaling
+          ref: ${{ inputs.scaling_ref }}
+          path: _scaling
+          fetch-depth: 1
+
+      - name: Place the modules where the core expects them
+        run: |
+          set -euo pipefail
+          # CoA Bots: the module lives in <repo>/module/{src,conf}; its characters
+          # database tables ship in <repo>/dist/sql and are applied by the Windows
+          # installer by hand.  Put them on the module SQL path so dbimport runs them.
+          dst=_core/modules/mod-coa-playerbots
+          mkdir -p "$dst/conf" "$dst/data/sql/db-characters/updates"
+          cp -r _bots/module/src "$dst/src"
+          cp _bots/module/conf/* "$dst/conf/"
+          cp _bots/dist/sql/*.sql "$dst/data/sql/db-characters/updates/"
+
+          # Content Scaling is a module repository of its own and its TBC and WotLK
+          # content packs are modules of their own; they must stand next to it.
+          mkdir -p _core/modules/mod-coa-content-scaling
+          tar -C _scaling --exclude=.git --exclude=artifacts --exclude=tools -cf - . \
+            | tar -C _core/modules/mod-coa-content-scaling -xf -
+          for pack in mod-coa-tbc-content mod-coa-wotlk-content; do
+            cp -r "_scaling/content-packs/$pack" "_core/modules/$pack"
+          done
+
+          # Recipes travel inside the build context.
+          cp -r _recipes/coa _core/coa
+          printf '.git\n' > _core/.dockerignore
+          du -sh _core
+
+      - name: Record the pinned revisions
+        id: pins
+        run: |
+          set -euo pipefail
+          echo "core=$(git -C _core rev-parse HEAD)"        >> "$GITHUB_OUTPUT"
+          echo "bots=$(git -C _bots rev-parse HEAD)"        >> "$GITHUB_OUTPUT"
+          echo "scaling=$(git -C _scaling rev-parse HEAD)"  >> "$GITHUB_OUTPUT"
+          echo "core_date=$(git -C _core log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the image tag
+        id: meta
+        run: |
+          set -euo pipefail
+          tag='${{ inputs.image_tag }}'
+          [ -n "$tag" ] || tag="0.$(date -u +%y%m%d).${{ github.run_number }}"
+          echo "tag=$tag"                                  >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}:${tag}"                     >> "$GITHUB_OUTPUT"
+          echo "latest=${IMAGE}:latest"                    >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push_image }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push) the server image
+        uses: docker/build-push-action@v6
+        with:
+          context: _core
+          file: _core/coa/Dockerfile
+          target: runtime
+          push: ${{ inputs.push_image }}
+          tags: |
+            ${{ steps.meta.outputs.image }}
+            ${{ steps.meta.outputs.latest }}
+          build-args: |
+            CORE_REV_HASH=${{ steps.pins.outputs.core }}
+            CORE_REV_BRANCH=${{ inputs.core_ref }}
+            CORE_REV_DATE=${{ steps.pins.outputs.core_date }}
+            STRIP=${{ inputs.strip_binaries && '1' || '0' }}
+          cache-from: type=gha,scope=coa-linux
+          cache-to: type=gha,scope=coa-linux,mode=max
+
+      - name: Smoke test the built binaries
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /azerothcore/env/dist/bin/worldserver \
+            '${{ steps.meta.outputs.image }}' --version
+          docker run --rm --entrypoint /azerothcore/env/dist/bin/authserver \
+            '${{ steps.meta.outputs.image }}' --version
+          docker run --rm --entrypoint /azerothcore/env/dist/bin/dbimport \
+            '${{ steps.meta.outputs.image }}' --help || true
+
+      - name: Export the binaries (registry-free fallback)
+        uses: docker/build-push-action@v6
+        with:
+          context: _core
+          file: _core/coa/Dockerfile
+          target: binaries
+          outputs: type=local,dest=_out-bin
+          cache-from: type=gha,scope=coa-linux
+
+      - name: Pack the fallback artifact
+        run: |
+          set -euo pipefail
+          tar -C _out-bin -cf - . | zstd -19 -T0 -o "coa-server-bin-${{ steps.meta.outputs.tag }}.tar.zst"
+          ls -lh coa-server-bin-*.tar.zst
+          sha256sum coa-server-bin-*.tar.zst | tee coa-server-bin.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coa-server-bin-${{ steps.meta.outputs.tag }}
+          path: |
+            coa-server-bin-*.tar.zst
+            coa-server-bin.sha256
+          retention-days: 30
+          compression-level: 0
+
+      - name: Summary
+        run: |
+          {
+            echo "### CoA Linux server image"
+            echo
+            echo "| component | pinned revision |"
+            echo "| --- | --- |"
+            echo "| Corfirean/azerothcore-wotlk-coa@${{ inputs.core_ref }} | \`${{ steps.pins.outputs.core }}\` |"
+            echo "| Corfirean/mod-coa-playerbots@${{ inputs.bots_ref }} | \`${{ steps.pins.outputs.bots }}\` |"
+            echo "| Corfirean/mod-coa-content-scaling@${{ inputs.scaling_ref }} | \`${{ steps.pins.outputs.scaling }}\` |"
+            echo
+            echo "Image: \`${{ steps.meta.outputs.image }}\` and \`${{ steps.meta.outputs.latest }}\`"
+            echo
+            echo "Run roles: \`ACORE_COMPONENT=worldserver|authserver|dbimport\`"
+          } >> "$GITHUB_STEP_SUMMARY"
