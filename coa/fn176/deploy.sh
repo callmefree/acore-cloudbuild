@@ -144,9 +144,31 @@ ensure('config/modules/mod_coa_playerbots.conf', [
     ('CoA.CollectionsForBots', '0'),
     ('CoA.RandomBotAccountPrefix', '"rndbot"'),
 ])
+
+def ensure_from_file(path, frag):
+    """Merge key = value lines from a fragment file into the [worldserver] section.
+
+    extra-config.conf holds the ~33 fork options whose defaults the core falls back
+    to silently; adding them is behaviour-neutral and removes the startup
+    'Config: Missing property ...' lines.
+    """
+    f, g = pathlib.Path(path), pathlib.Path(frag)
+    if not f.exists() or not g.exists():
+        print('  [skip]', path, frag); return
+    pairs = []
+    for ln in g.read_text().splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith('#'):
+            continue
+        key, _, value = ln.partition('=')
+        pairs.append((key.strip(), value.strip()))
+    ensure(path, pairs)
+
+ensure_from_file('config/worldserver.conf', 'extra-config.conf')
 PY
 chown -R 1000:1000 config logs 2>/dev/null || true
 chmod 600 config/coa-bots-level-builds.json 2>/dev/null || true
+chmod +x watchdog.sh backup-db.sh botcmd.sh build-from-artifact.sh 2>/dev/null || true
 [ "${1:-deploy}" = config ] && exit 0
 
 # ------------------------------------------------------------------ database
@@ -204,5 +226,34 @@ log "starting authserver + worldserver"
 docker compose up -d
 sleep 5
 docker compose ps
+
+# ------------------------------------------------------------------ self-healing + snapshots
+# Two cron jobs in the deploying user's crontab (no root needed):
+#   watchdog.sh  - every 2 min: restart coa-* containers that are down or whose
+#                  healthcheck (3724/8085) has failed twice in a row.
+#   backup-db.sh - every 6 h: mysqldump the three acore_* databases into backups/,
+#                  keep 14 days / newest 20 dumps.
+log "installing cron jobs (watchdog every 2 min, database snapshot every 6 h)"
+DIR="$(pwd)"
+if command -v crontab >/dev/null 2>&1; then
+    marker='# coa-stack'
+    cron_tmp="$(mktemp)"
+    crontab -l 2>/dev/null | grep -vF "$marker" > "$cron_tmp" || true
+    cat >> "$cron_tmp" <<EOF
+*/2 * * * * $DIR/watchdog.sh >> $DIR/logs/watchdog.cron.log 2>&1 $marker
+17 */6 * * * $DIR/backup-db.sh >> $DIR/logs/backup.cron.log 2>&1 $marker
+EOF
+    if crontab "$cron_tmp"; then
+        rm -f "$cron_tmp"
+        crontab -l | grep -F "$marker"
+    else
+        log "  [warn] could not install the crontab - run watchdog.sh/backup-db.sh manually"
+        rm -f "$cron_tmp"
+    fi
+else
+    log "  [warn] no crontab command - run watchdog.sh/backup-db.sh manually"
+fi
 echo
-echo "logs:  docker compose logs -f coa-worldserver coa-authserver"
+echo "logs:     docker compose logs -f coa-worldserver coa-authserver"
+echo "console:  ./botcmd.sh \"server info\""
+echo "watchdog: tail -f logs/watchdog.log        snapshot: ./backup-db.sh"

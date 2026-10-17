@@ -87,6 +87,14 @@ services:
       coa-database:
         condition: service_healthy
     networks: [coa]
+    # Liveness = "the login port answers". Docker alone only stops on crash, so
+    # watchdog.sh (host cron, every 2 min) restarts containers that go unhealthy.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3724"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   coa-worldserver:
     image: ${COA_IMAGE:-ghcr.io/callmefree/coa-server:latest}
@@ -95,6 +103,8 @@ services:
     command: ["worldserver"]
     stdin_open: true
     tty: true
+    # AzerothCore saves characters on SIGTERM: give it time before the SIGKILL.
+    stop_grace_period: 60s
     environment:
       <<: *server-env
       ACORE_COMPONENT: worldserver
@@ -110,6 +120,15 @@ services:
       coa-database:
         condition: service_healthy
     networks: [coa]
+    # The world port only opens after the world is fully initialised (~20 s), so
+    # start_period covers that; a hung-but-alive worldserver fails the probe and
+    # watchdog.sh restarts it.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8085"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
 
 volumes:
   coa-db-data:

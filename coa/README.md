@@ -54,15 +54,18 @@ so a deployment never depends on the registry being reachable.
 
 `coa/fn176/` holds the deployment: `docker-compose.yml` (mysql 8.4 + authserver +
 worldserver, with the one-shot `dbimport` behind the `tools` profile),
-`.env.example`, `deploy.sh`, `botcmd.sh`, `build-from-artifact.sh` and
-`dump-official-db.sh`.
+`.env.example`, `deploy.sh`, `botcmd.sh`, `build-from-artifact.sh`,
+`dump-official-db.sh`, `extra-config.conf` and the two cron scripts
+`watchdog.sh` / `backup-db.sh`.
 
 ```
 /vol1/1000/docker/coa-fn176/
   docker-compose.yml   .env   deploy.sh   botcmd.sh
+  extra-config.conf    watchdog.sh   backup-db.sh
   config/              worldserver.conf, authserver.conf, dbimport.conf, modules/
   data/                dbc/ maps/ vmaps/ mmaps/ Cameras/   (game data, symlink -> root/Data)
-  logs/                server logs (bind mount, must stay writable by uid 1000)
+  logs/                server logs + watchdog.log + backup.log (bind mount, uid 1000)
+  backups/             coa-all-<stamp>.sql.gz snapshots
 ```
 
 Game data comes from the fork's own signed Windows install package
@@ -129,6 +132,64 @@ repository) and sets `CoaBots.AutoLoginOnStartup = 1` with
 once. It also adds the two keys the module reads but its `.conf.dist` does not ship
 (`CoA.CollectionsForBots`, `CoA.RandomBotAccountPrefix`).
 
+### Silencing the "Missing property" startup warnings
+
+The fork reads ~103 options from the worldserver config that neither its own
+`worldserver.conf.dist` nor the 35 bundled modules ship, so a fresh start logs ~140
+`Config: Missing property <key> ... add "<key> = <value>"` lines. `extra-config.conf`
+lists every one of them **with the value the core already falls back to**, so merging
+it changes no behaviour - it only removes the noise and makes the effective defaults
+visible/tunable in one place. `deploy.sh` merges the file into
+`config/worldserver.conf` inside `[worldserver]` (idempotent; existing keys win).
+
+Regenerating the list after a core upgrade:
+
+```
+docker logs coa-worldserver 2>&1 | sed -e 's/\x1b\[[0-9;]*m//g' \
+  | grep -o 'add "[^"]*"' | sed 's/^add "//; s/"$//' | sort -u
+```
+
+Beware that `docker logs` keeps output from *previous* runs too - compare against the
+line after the last `AzerothCore rev.` banner before concluding anything.
+
+### Self-healing and database snapshots
+
+`restart: unless-stopped` only covers a process that dies. Two extra layers, both
+installed as cron entries in the deploying user's crontab by `deploy.sh` (no root):
+
+| job | schedule | what it does |
+| --- | --- | --- |
+| `watchdog.sh` | every 2 min | restarts any `coa-*` container that is not running, or whose healthcheck (TCP 3724/8085) failed twice in a row; logs to `logs/watchdog.log`, hourly heartbeat included |
+| `backup-db.sh` | 17 */6 (4x/day) | `mysqldump` of `acore_auth` + `acore_characters` + `acore_world` (single transaction, routines/triggers/events) → `backups/coa-all-<stamp>.sql.gz` + `.sha256`; keeps 14 days and at least the newest 20 |
+
+Healthchecks are defined in `docker-compose.yml` (authserver 3724, worldserver 8085
+with a 180 s `start_period`; `stop_grace_period: 60s` lets AzerothCore save characters
+on SIGTERM).
+
+```
+./watchdog.sh [--dry-run]                  # one pass
+./backup-db.sh                             # snapshot now
+./backup-db.sh --restore backups/coa-all-<stamp>.sql.gz   # stop servers, reload, start
+tail -f logs/watchdog.log logs/backup.log
+```
+
+### Legacy CoA deployment still running on 192.168.1.89
+
+The previous (Windows) CoA server is untouched and still self-healing; it is useful as
+a data/history source:
+
+- Windows host `192.168.1.89`, SMB share **`COA` readable anonymously** (`smbclient
+  //192.168.1.89/COA -N`), RDP 3389; the game itself lives in `C:\COA\CoA-Repack`.
+- frp tunnel: `C:\COA\frp\frpc.toml` → `soulcore.asia:7000` (frps on the HK VPS
+  `47.238.240.32`), exposing 3724 auth / 8085 world / 8090 register; only loopback
+  services on the Windows side, so the LAN ports look closed by design.
+- Player entry `https://register.soulcore.asia` (nginx → `127.0.0.1:8090` → tunnel →
+  `register_server.py`, which writes SRP6 rows straight into `acore_auth.account`).
+- History/backups on the share: `全量备份/` (`2026-09-26-routeA-players-3dbs.sql`,
+  91 MB, plus `2026-09-26-pre-routeB-forked-world.sql`, 514 MB), `文档/`
+  (`CoA注册网页-部署与运维.md`, `CoA反代迁移-20261011.md`,
+  `CoA外网开服-成功方案（权威版）.md`, ...), `脚本/` (`coa_backup.py`, task XMLs).
+
 ### Verified state (fn176, 2026-10-17)
 
 | check | result |
@@ -140,18 +201,21 @@ once. It also adds the two keys the module reads but its `.conf.dist` does not s
 | databases | dump restored; `acore_auth` 22 / `acore_characters` 20 / `acore_world` 3025 applied updates, `coa_boss_schedule` on the `effect_d0..d3` schema |
 | bots | `mod_coa_playerbots.conf` loaded, talent builds loaded (70 builds / 3564 picks), `botcmd spawnleveled` → **195 characters in world**, all 195 re-log in automatically after `docker restart coa-worldserver` |
 | account | `local` / `local`, security 3 (in `acore_auth.account_access`) |
+| warnings | 0 `Missing property` lines after merging `extra-config.conf` (was ~140) |
+| self-healing | `watchdog.sh` cron active (heartbeat in `logs/watchdog.log`), `backup-db.sh` snapshot verified (109 MB gz, sha256, 22 s) |
 
 ### Known gaps
 
 - The build loses the revision banner: `worldserver --version` prints
   `rev. unknown 1970-01-01 (Archived branch)`; the `-Drev_*` args only reach the
   banner when the build runs against a git checkout.
-- Two module config keys are still read by compiled code with no `.conf.dist`
-  entry (worked around by `deploy.sh`, worth reporting upstream).
-- No auto-restart policy was added for a crashed `coa-worldserver` beyond the
-  compose `restart: unless-stopped`.
 - The GHCR package is pullable anonymously, but pulls from fn176 stall on layer
   `d08df6459be3`; the artifact route (`build-from-artifact.sh`) is what is used.
+- The database can only come from an official pre-built dump; the from-scratch SQL
+  chain (`COA_DB_SOURCE=dbimport`) still fails on the stale
+  `rev_20260930_85_molten_core_boss_kits.sql`.
+- No real 3.3.5a client has logged in through the tunnel yet - only port/realmlist
+  checks.
 
 Client: WotLK 3.3.5a with `realmlist.wtf` → `set realmlist 192.168.1.176`
 (realm address/port in `acore_auth.realmlist` are both set to `192.168.1.176:8085`).
