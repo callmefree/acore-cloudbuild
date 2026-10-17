@@ -179,7 +179,28 @@ jobs:
           docker run --rm --entrypoint /azerothcore/env/dist/bin/dbimport \
             '${{ steps.meta.outputs.image }}' --help || true
 
-      - name: Export the binaries (registry-free fallback)
+      # Registry-free fallback: pull back the image that was just pushed and take the
+      # files out of it.  (Building the Dockerfile's `binaries` target here would pay
+      # the whole compile a second time.)
+      - name: Extract the binaries (registry-free fallback)
+        if: ${{ inputs.push_image }}
+        run: |
+          set -euo pipefail
+          img='${{ steps.meta.outputs.image }}'
+          docker pull "$img"
+          cid="$(docker create "$img")"
+          rm -rf _out-bin
+          mkdir -p _out-bin/bin _out-bin/etc _out-bin/sql
+          docker cp "$cid:/azerothcore/env/dist/bin/." _out-bin/bin/
+          docker cp "$cid:/azerothcore/env/ref/etc/."  _out-bin/etc/
+          docker cp "$cid:/azerothcore/data/."         _out-bin/sql/data/
+          docker cp "$cid:/azerothcore/modules/."      _out-bin/sql/modules/
+          docker rm "$cid"
+          ls -l _out-bin/bin
+          du -sh _out-bin
+
+      - name: Export the binaries with buildx (registry disabled)
+        if: ${{ !inputs.push_image }}
         uses: docker/build-push-action@v6
         with:
           context: _core

@@ -53,6 +53,9 @@ COPY modules modules
 COPY data data
 
 WORKDIR /azerothcore/build
+# Compile only: this layer is the expensive one and is exported by the workflow's
+# buildx `cache-to: type=gha,mode=max`, so a retry after a packaging mistake does
+# not pay the ~90 minute compile again.  Keep the artefact collection out of it.
 RUN --mount=type=cache,id=coa-ccache,target=/ccache,sharing=locked \
     export CCACHE_DIR=/ccache CCACHE_MAXSIZE=3G CCACHE_BASEDIR=/azerothcore CCACHE_COMPILERCHECK=content \
     && ccache --zero-stats \
@@ -69,21 +72,28 @@ RUN --mount=type=cache,id=coa-ccache,target=/ccache,sharing=locked \
         -Drev_hash="${CORE_REV_HASH}" -Drev_branch="${CORE_REV_BRANCH}" -Drev_date="${CORE_REV_DATE}" \
     && cmake --build . --target worldserver authserver dbimport \
         -j "$([ "${JOBS}" -gt 0 ] && echo "${JOBS}" || nproc)" \
-    && ccache --show-stats \
-    && mkdir -p /out/bin /out/etc/modules /out/sql/data /out/sql/modules \
-    && cp src/server/apps/worldserver/worldserver /out/bin/ \
-    && cp src/server/apps/authserver/authserver /out/bin/ \
-    && cp "$(find /azerothcore/build -type f -name dbimport -perm -u+x | head -1)" /out/bin/ \
-    && cp "$(find /azerothcore/src -name worldserver.conf.dist | head -1)" /out/etc/ \
-    && cp "$(find /azerothcore/src -name authserver.conf.dist | head -1)" /out/etc/ \
-    && cp "$(find /azerothcore/src -name dbimport.conf.dist | head -1)" /out/etc/ \
-    && find /azerothcore/modules -maxdepth 3 -path '*/conf/*.conf.dist' -exec cp -t /out/etc/modules/ {} + \
-    && cp -a /azerothcore/data/. /out/sql/data/ \
-    && for m in /azerothcore/modules/*/; do n="$(basename "$m")"; \
-         if [ -d "$m/data" ]; then mkdir -p "/out/sql/modules/$n"; cp -a "$m/data" "/out/sql/modules/$n/data"; fi; \
-       done \
-    && if [ "${STRIP}" = "1" ]; then strip --strip-debug /out/bin/*; fi \
-    && ls -l /out/bin && du -sh /out
+    && ccache --show-stats
+
+# Collect the artefacts.  Ninja writes each executable next to its sources, so the
+# binaries are build/src/server/apps/{worldserver,authserver} and build/src/tools/dbimport.
+RUN set -eux; \
+    for b in src/server/apps/worldserver src/server/apps/authserver src/tools/dbimport; do \
+        [ -x "$b" ] || { echo "missing build artefact: $b"; ls -l src/server/apps src/tools 2>/dev/null || true; exit 1; }; \
+    done; \
+    mkdir -p /out/bin /out/etc/modules /out/sql/data /out/sql/modules; \
+    cp src/server/apps/worldserver /out/bin/; \
+    cp src/server/apps/authserver /out/bin/; \
+    cp src/tools/dbimport /out/bin/; \
+    cp "$(find /azerothcore/src -name worldserver.conf.dist | head -1)" /out/etc/; \
+    cp "$(find /azerothcore/src -name authserver.conf.dist | head -1)" /out/etc/; \
+    cp "$(find /azerothcore/src -name dbimport.conf.dist | head -1)" /out/etc/; \
+    find /azerothcore/modules -maxdepth 3 -path '*/conf/*.conf.dist' -exec cp -t /out/etc/modules/ {} +; \
+    cp -a /azerothcore/data/. /out/sql/data/; \
+    for m in /azerothcore/modules/*/; do n="$(basename "$m")"; \
+        if [ -d "$m/data" ]; then mkdir -p "/out/sql/modules/$n"; cp -a "$m/data" "/out/sql/modules/$n/data"; fi; \
+    done; \
+    if [ "${STRIP}" = "1" ]; then strip --strip-debug /out/bin/*; fi; \
+    ls -l /out/bin; du -sh /out
 
 # ==============================================================================
 # Stage: runtime  (worldserver + authserver + dbimport in one image)
