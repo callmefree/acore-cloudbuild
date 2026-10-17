@@ -57,6 +57,19 @@ if [ ! -s config/coa-bots-level-builds.json ]; then
         || { log "  [warn] download failed - CoaBots.TalentBuildsPath will not resolve"; rm -f config/coa-bots-level-builds.json.part; }
 fi
 
+# The CoA Bots module keeps two character tables in its release payload
+# (dist/sql/...) instead of in module/src/data/sql, so dbimport never applies them.
+# Keep a copy in config/extra-sql; the database step below loads it.
+mkdir -p config/extra-sql
+if ! compgen -G "config/extra-sql/*.sql" >/dev/null; then
+    log "fetching CoA Bots extra SQL (dist/sql/2026_09_15_00_ascension_character_selection.sql)"
+    f=config/extra-sql/2026_09_15_00_ascension_character_selection.sql
+    curl -fsSL -x "$PROXY" -o "$f.part" \
+        https://raw.githubusercontent.com/Corfirean/mod-coa-playerbots/master/dist/sql/2026_09_15_00_ascension_character_selection.sql \
+        && mv "$f.part" "$f" \
+        || { log "  [warn] download failed - character_ascension_state/account_ascension_settings stay missing"; rm -f "$f.part"; }
+fi
+
 python3 - <<'PY'
 import os, pathlib, re
 def patch(path, rules):
@@ -71,16 +84,20 @@ def patch(path, rules):
     f.write_text(text)
     print('  patched', path)
 
+# SOAP and the telnet remote console (Ra.*) authenticate against an account in the
+# auth database, not against config keys - this fork's worldserver.conf has neither
+# SOAP.Username nor SOAP.Password.  Create the account with ./botcmd.sh
+# "account create <user> <pass>" and "./botcmd.sh account set gmlevel <user> 4 -1".
 patch('config/worldserver.conf', [
     (r'^DataDir\s*=.*$',                  'DataDir = "/azerothcore/env/dist/data"'),
     (r'^LogsDir\s*=.*$',                  'LogsDir = "/azerothcore/env/dist/logs"'),
     (r'^Updates\.EnableDatabases\s*=.*$', 'Updates.EnableDatabases = 0'),
     (r'^SOAP\.Enabled\s*=.*$',            'SOAP.Enabled = 1'),
-    (r'^SOAP\.Username\s*=.*$',           'SOAP.Username = "coa"'),
-    (r'^SOAP\.Password\s*=.*$',           'SOAP.Password = "%s"' % os.environ['COA_SOAP_PASSWORD']),
+    (r'^SOAP\.IP\s*=.*$',                 'SOAP.IP = "0.0.0.0"'),
     (r'^SOAP\.Port\s*=.*$',               'SOAP.Port = 7878'),
     (r'^Ra\.Enable\s*=.*$',               'Ra.Enable = 1'),
     (r'^Ra\.IP\s*=.*$',                   'Ra.IP = "0.0.0.0"'),
+    (r'^Ra\.Port\s*=.*$',                 'Ra.Port = 3443'),
 ])
 patch('config/authserver.conf', [
     (r'^LogsDir\s*=.*$', 'LogsDir = "/azerothcore/env/dist/logs"'),
@@ -110,6 +127,18 @@ echo "database health: ${st:-unknown}"
 
 log "importing databases with dbimport (first run takes a while)"
 docker compose run --rm coa-db-import
+
+# The CoA Bots module keeps these two character tables in its release payload
+# (dist/sql/...) rather than in module/src/data/sql, so dbimport never sees them.
+# Both statements are CREATE TABLE IF NOT EXISTS, so re-applying them is harmless.
+if compgen -G "config/extra-sql/*.sql" >/dev/null; then
+    log "applying extra SQL from config/extra-sql to acore_characters"
+    for f in config/extra-sql/*.sql; do
+        echo "  -> $f"
+        docker exec -i coa-database mysql -uroot -p"${COA_DB_ROOT_PASSWORD}" \
+            acore_characters < "$f"
+    done
+fi
 
 log "pointing realm 1 at ${COA_REALM_ADDRESS}"
 docker exec coa-database mysql -uroot -p"${COA_DB_ROOT_PASSWORD}" -e \

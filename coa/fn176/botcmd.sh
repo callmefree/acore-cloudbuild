@@ -1,42 +1,28 @@
 #!/usr/bin/env bash
-# Run a worldserver console command through the SOAP endpoint.
+# Send a console command to the running worldserver.
 #
 #   ./botcmd.sh "botcmd spawnleveled 200"
 #   ./botcmd.sh "botcmd spawnrandom 10"
 #   ./botcmd.sh "server info"
-#   ./botcmd.sh "account create tester tester"
+#   ./botcmd.sh "account create local local"
+#   ./botcmd.sh "account set gmlevel local 4 -1"
 #
-# Needs SOAP.Enabled = 1 in worldserver.conf (deploy.sh sets it) and the port
-# published in docker-compose.yml (7878 by default).
+# The worldserver container runs with an open stdin and a tty, so its console is
+# driven with `docker attach`.  That needs no SOAP or remote-access credentials
+# (this fork's worldserver.conf has no SOAP.Username/SOAP.Password keys: SOAP and
+# the telnet remote console both authenticate against an auth-database account
+# with a high security level, so create one with the two commands above).
 set -euo pipefail
 cd "$(dirname "$0")"
-set -a; . ./.env; set +a
-: "${COA_SOAP_PASSWORD:?empty}"
 
 CMD="${*:?usage: botcmd.sh <console command>}"
-HOST="${COA_SOAP_HOST:-127.0.0.1}"
-PORT="${COA_SOAP_EXTERNAL_PORT:-7878}"
-esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+SRV="${COA_WORLD_CONTAINER:-coa-worldserver}"
+WAIT="${COA_CONSOLE_WAIT:-6}"
+TIMEOUT="${COA_CONSOLE_TIMEOUT:-25}"
 
-body=$(cat <<EOF
-<?xml version="1.0" encoding="utf-8"?>
-<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns1="urn:AC">
-  <SOAP-ENV:Body>
-    <ns1:executeCommand>
-      <command>$(esc "$CMD")</command>
-    </ns1:executeCommand>
-  </SOAP-ENV:Body>
-</SOAP-ENV:Envelope>
-EOF
-)
+[ "$(docker inspect -f '{{.State.Running}}' "$SRV" 2>/dev/null || echo no)" = true ] \
+    || { echo "container $SRV is not running" >&2; exit 1; }
 
-reply=$(curl -sS -u "coa:${COA_SOAP_PASSWORD}" \
-    -H 'Content-Type: text/xml; charset=utf-8' \
-    --data "$body" "http://${HOST}:${PORT}/" || true)
-
-# strip the SOAP envelope, keep the result text
-printf '%s' "$reply" \
-    | sed -e 's|<SOAP-ENV:Envelope[^>]*>||' -e 's|</SOAP-ENV:Envelope>||' \
-          -e 's|<[^>]*>||g' \
-    | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e 's/&amp;/\&/g'
-printf '\n'
+# Feed the command, let the server answer, then close the attach.
+{ printf '%s\n' "$CMD"; sleep "$WAIT"; } \
+    | timeout "$TIMEOUT" docker attach --detach-keys='' "$SRV" 2>&1 || true
