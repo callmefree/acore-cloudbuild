@@ -76,8 +76,13 @@ def main() -> int:
 
     patch(
         cpp,
-        "    if (!sToCloud9Sidecar->ClusterModeEnabled())\n",
-        "    if (!sToCloud9Sidecar->ClusterModeEnabled() && !_authCrypt.IsInitialized() && !usePlaintextWorldHeaders)\n",
+        "    if (!sToCloud9Sidecar->ClusterModeEnabled())\n"
+        "        // even if auth credentials are bad, try using the session key we have"
+        " - client cannot read auth response error without it\n",
+        "    if (!sToCloud9Sidecar->ClusterModeEnabled() && !_authCrypt.IsInitialized()"
+        " && !usePlaintextWorldHeaders)\n"
+        "        // even if auth credentials are bad, try using the session key we have"
+        " - client cannot read auth response error without it\n",
     )
 
     if dist.is_file():
@@ -91,7 +96,6 @@ def main() -> int:
             "# 0 uses the stock header cipher (reconstructed Extensions.dll). Restart to apply.\n"
             "CoA.PlaintextWorldHeaders = 1\n",
         )
-        print(f"patched {dist}")
     else:
         print(f"note: {dist} not present, skipped")
 
