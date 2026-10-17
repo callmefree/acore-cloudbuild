@@ -31,6 +31,14 @@ rotate_log() { [ -f "$LOG" ] && [ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -g
 rotate_log
 mkdir -p "$STRIKE_DIR" 2>/dev/null || true
 
+# Maintenance escape hatch: `touch .watchdog/pause` disables all restarts (the
+# containers stay down on purpose, e.g. while dumping/restoring the database);
+# remove the file to re-arm.
+if [ -e "$STRIKE_DIR/pause" ]; then
+  log "paused ($STRIKE_DIR/pause exists) - not restarting anything"
+  exit 0
+fi
+
 if ! docker info >/dev/null 2>&1; then
   log "WARN docker daemon not reachable, nothing to do"
   exit 0
@@ -85,3 +93,7 @@ if [ "$(cat "$hb" 2>/dev/null)" != "$hour" ]; then
   printf '%s\n' "$hour" >"$hb"
   log "heartbeat: problems=$problems unhealthy_strikes=$strikes_total"
 fi
+
+# Per-run marker: `cat .watchdog/last-run` shows the schedule is alive without
+# growing the log by one line every two minutes.
+date '+%Y-%m-%d %H:%M:%S' >"$STRIKE_DIR/last-run"
