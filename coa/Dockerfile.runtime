@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1
+#
+# Runtime-only CoA server image, assembled from the registry-free fallback
+# artifact of .github/workflows/coa-linux-image.yml:
+#
+#   artifact  coa-server-bin-<tag>.tar.zst   ->   bin/  etc/  sql/
+#
+# Use this when ghcr.io/callmefree/coa-server cannot be pulled anonymously
+# (new GHCR packages are private by default and the deploy PAT has no
+# read:packages scope).  Nothing is compiled here: the three binaries come
+# straight from the cloud build, this stage only adds the runtime libraries.
+#
+# Build context must contain: bin/  etc/  sql/  entrypoint.sh
+# (fn176/build-from-artifact.sh prepares exactly that).
+#
+# Toolchain/ABI must match the builder stage of coa/Dockerfile.
+
+ARG UBUNTU_IMAGE=ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
+
+FROM ${UBUNTU_IMAGE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+# Same runtime library set as the builder-produced runtime stage.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libmysqlclient24 libicu78 libncurses6 libreadline8t64 \
+        ca-certificates tzdata adduser \
+    && rm -rf /var/lib/apt/lists/* \
+    && (userdel --remove ubuntu 2>/dev/null || true) \
+    && addgroup --gid "${GROUP_ID}" acore \
+    && adduser --disabled-password --gecos '' --uid "${USER_ID}" --gid "${GROUP_ID}" acore
+
+ENV ACORE_COMPONENT=unknown \
+    AC_FORCE_CREATE_DB=1 \
+    PATH=/azerothcore/env/dist/bin:$PATH
+
+WORKDIR /azerothcore
+RUN mkdir -p /azerothcore/env/dist/bin /azerothcore/env/dist/data /azerothcore/env/dist/etc \
+             /azerothcore/env/dist/logs /azerothcore/env/dist/temp /azerothcore/env/ref/etc
+
+COPY bin/ /azerothcore/env/dist/bin/
+COPY etc/ /azerothcore/env/ref/etc/
+# dbimport resolves the SQL from the compiled-in source directory (/azerothcore).
+COPY sql/data/ /azerothcore/data/
+COPY sql/modules/ /azerothcore/modules/
+COPY entrypoint.sh /azerothcore/entrypoint.sh
+
+RUN chmod 755 /azerothcore/entrypoint.sh && chown -R acore:acore /azerothcore
+
+USER acore
+ENTRYPOINT ["/azerothcore/entrypoint.sh"]
+CMD ["worldserver"]
