@@ -1,0 +1,57 @@
+diff --git a/src/RoguelikeMgr.cpp b/src/RoguelikeMgr.cpp
+index b0a1c9a..075b4d6 100644
+--- a/src/RoguelikeMgr.cpp
++++ b/src/RoguelikeMgr.cpp
+@@ -821,13 +821,14 @@ std::string RoguelikeMgr::GetActiveAffixNames(uint32 runId) const
+     return result;
+ }
+ 
+-// Buff system (+10% all stats per stack via direct stat modification)
+-// In 3.3.5 clients, spell tooltips are hardcoded in the DBC and can't be updated
+-// Buff system (+10% all stats per stack via BoK aura with visual stack count)
++// Buff system (+10% all stats per stack via carrier aura with visual stack count)
+ // SetStackAmount(n) both displays the stack number on the buff icon AND
+ // auto-multiplies the base 10% effect by n (so 3 stacks = 30%).
++// The carrier is a realm-defined spell (CumulativeAura = 255, infinite
++// duration, no dispel type) instead of a real paladin blessing, so stacking it
++// can never leak onto normal player buffs.
+ 
+-static constexpr uint32 BUFF_SPELL_ID = 25898;  // Greater Blessing of Kings
++static constexpr uint32 BUFF_SPELL_ID = 91800;  // 无尽之力 (roguelike buff carrier)
+ 
+ void RoguelikeMgr::ApplyBuffAura(Player* player, uint32 stacks)
+ {
+diff --git a/src/scripts/dm_world_script.cpp b/src/scripts/dm_world_script.cpp
+index 91871e7..80b8de8 100644
+--- a/src/scripts/dm_world_script.cpp
++++ b/src/scripts/dm_world_script.cpp
+@@ -31,19 +31,16 @@ public:
+             return;
+         }
+ 
+-        // Patch Greater Blessing of Kings (25898) to allow stacking.
+-        // The base DBC has StackAmount=0 which prevents the client from
+-        // showing a stack count on the buff icon.  Setting it server-side
+-        // to 20 lets SetStackAmount() work and the client renders "2", "3"
+-        // etc. on the icon during roguelike runs.
+-        SpellInfo* bokInfo = const_cast<SpellInfo*>(
+-            sSpellMgr->GetSpellInfo(25898));
+-        if (bokInfo)
+-        {
+-            bokInfo->StackAmount = 255;
+-            LOG_INFO("module", "DungeonMaster: Patched BoK (25898) StackAmount → 255 for roguelike buff stacking.");
+-        }
+-
++        // NOTE: the roguelike buff used to be carried by Greater Blessing of
++        // Kings (25898), whose StackAmount this hook raised to 255 through a
++        // const_cast on the *global* SpellInfo.  That made every paladin who
++        // refreshed a real Blessing of Kings stack it: Aura::ModStackAmount
++        // only clamps the stack count while StackAmount is 0, and
++        // Aura::SetStackAmount then re-evaluates the effect once per stack
++        // (+2550% all stats at 255 stacks).
++        // The buff now lives on its own spell, 91800 (无尽之力), which this
++        // realm defines in the spell_dbc table and ships to clients in the
++        // Spell.dbc patch.
+         sDungeonMasterMgr->Initialize();
+         sRoguelikeMgr->Initialize();
+ 
