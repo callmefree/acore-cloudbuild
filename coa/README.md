@@ -202,6 +202,19 @@ replacements with hard asserts, not `git apply`) and `extra-config.conf` sets
 `CoA.PlaintextWorldHeaders = 1`. Set it to `0` only after every player runs the
 reconstructed Extensions.dll client.
 
+Resolved 2026-10-18: run
+[39042202484](https://github.com/callmefree/acore-cloudbuild/actions/runs/39042202484)
+built the patched core (artifact `coa-server-bin-0.261017.3`, id 12106977381); the
+resulting `worldserver` contains the `PlaintextWorldHeaders` string the old binary lacked
+(`sha256 d1f735a8…` vs `23bdb400…`), and the image
+`8e6f751d4989ecdc1cf070f4fd534d143333255cf95d4e1f27d8d11932c02d7b` was deployed
+(`coa-server:local`; note the local tag `0.261017.3` was reused and overwritten by this
+build - the previous image with that tag was the pre-patch one). After the restart:
+`grep -c "malformed packet" logs/Server.log` = **0**, account `674968117`
+(`last_ip 172.26.0.6`) authenticated and stayed in world, all 195 bots re-logged in.
+Full sequence: `auto-deploy-plaintext.sh <run_id> <tag>` on the deployment host waits for
+the run, builds the image from its artifact and recreates `coa-authserver`/`coa-worldserver`.
+
 ### Self-healing and database snapshots
 
 `restart: unless-stopped` only covers a process that dies. Two extra layers, both
@@ -356,6 +369,7 @@ The rest of this section describes the host as it was found:
 | cutover | public ingress moved to fn176: `coa-frpc` (profile `tunnel`, image `coa-frpc:local` = official frp v0.71.0) owns the VPS ports 3724/8085/8090; `https://register.soulcore.asia/` = 200, `/health` = ok, and `soulcore.asia:3724` answered a real 3.3.5a `AUTH_LOGON_CHALLENGE` (0x00) for account `LOCAL` |
 | player data | legacy `acore_auth` + `acore_characters` (exported 2026-10-17 20:51) imported: 202 accounts / 3369 characters / 23 guilds / 0 orphans, top characters level 80; `LOCAL`/`local` GM (security 3) works against the imported SRP6 verifier |
 | bots after import | `botcmd spawnleveled 200` -> 195 characters in world, 5.55 GB RSS, update diff 5 ms, 3569 characters total |
+| remote client login | **2026-10-18 01:00** with the plaintext-header build: a WAN client (source `125.110.192.233` → VPS frps → `coa-frpc`) logged in and reached the character screen with **0** `malformed packet` lines; before the patch the same client was dropped ~5 s after login |
 
 ### Known gaps
 
@@ -367,8 +381,9 @@ The rest of this section describes the host as it was found:
 - The database can only come from an official pre-built dump; the from-scratch SQL
   chain (`COA_DB_SOURCE=dbimport`) still fails on the stale
   `rev_20260930_85_molten_core_boss_kits.sql`.
-- No real 3.3.5a client has connected end-to-end yet; the logon handshake and both game
-  tunnels are verified from outside the LAN, but nobody has reached the character screen.
+- The remote world connection is solved (see the plaintext-header section above); what is
+  still unverified is a full session past the character screen - nobody has played,
+  zoned or logged out from inside the world yet.
 - The imported data still carries 3234 legacy SQUID bot characters (`RNDBOT*` accounts,
   ~91% of the character table); only 135 characters belong to real players, and the
   legacy bots have no AI under this module. Provenance, verified 2026-10-17: 154 `RNDBOT*`
