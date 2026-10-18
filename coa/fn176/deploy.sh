@@ -124,6 +124,9 @@ patch('config/worldserver.conf', [
     (r'^Ra\.Enable\s*=.*$',               'Ra.Enable = 1'),
     (r'^Ra\.IP\s*=.*$',                   'Ra.IP = "0.0.0.0"'),
     (r'^Ra\.Port\s*=.*$',                 'Ra.Port = 3443'),
+    # 195 CoA bots saturate the single map-update thread (cpu ~105%, one core); two
+    # threads keep the update diff low.  Raise further if more bot-heavy maps run.
+    (r'^MapUpdate\.Threads\s*=.*$',       'MapUpdate.Threads = 2'),
 ])
 patch('config/authserver.conf', [
     (r'^LogsDir\s*=.*$', 'LogsDir = "/azerothcore/env/dist/logs"'),
