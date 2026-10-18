@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Watch the CoA server during a play test.
+"""Watch the CoA server during play tests.
 
-Follows the world/auth logs, keeps only lines a human cares about (login/logout,
-malformed world headers, errors, crashes, the test account) and appends a health
-snapshot every 5 minutes.  Writes logs/playtest-monitor.log in the deployment dir.
+Follows the world/error logs, keeps only lines a human cares about and appends a
+health snapshot (with the real players' progress) every 5 minutes.
 
     nohup setsid ./playtest_monitor.py >/dev/null 2>&1 &
 """
@@ -15,15 +14,17 @@ import time
 
 BASE = "/vol1/1000/docker/coa-fn176"
 LOG = os.path.join(BASE, "logs", "playtest-monitor.log")
-FILES = ["logs/Server.log", "logs/Errors.log", "logs/Auth.log", "logs/Playerbots.log"]
+FILES = ["logs/Server.log", "logs/Errors.log"]
+HEALTH_EVERY = 300
+NOISE = re.compile(r"BotMgr heartbeat|Wrong area flag|STUCK-DETECTOR|^FLEE: |Auras: Unknown Shapeshift")
 
 PAT = re.compile(
-    r"malformed packet|WorldSocket|HandleAuthSession|logged in|logged out|disconnect"
-    r"|kick|ban|crash|assert|Segmentation|exception|ERROR|Fatal|saveall|shutdown"
-    r"|Vera|674968117|SaveAll|SaveToDB",
+    r"malformed packet|WorldSocket|HandleAuthSession|\blogged (in|out)\b|\blogin\b|disconnect"
+    r"|\bkick(ed|ing)?\b|\bban(ned|ning)?\b|\bcrash\b|assert|Segmentation|exception"
+    r"|\bERROR\b|\bFatal\b|\bsaveall\b|shutdown|Kill credit|\bquest (complete|reward)"
+    r"|level up|LevelUp|Vera|674968117",
     re.I,
 )
-HEALTH_EVERY = 300
 
 
 def sh(cmd: str) -> str:
@@ -31,9 +32,8 @@ def sh(cmd: str) -> str:
 
 
 def note(msg: str) -> None:
-    line = datetime.datetime.now().strftime("%F %T") + " " + msg.rstrip()
     with open(LOG, "a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
+        fh.write(datetime.datetime.now().strftime("%F %T") + " " + msg.rstrip() + "\n")
 
 
 def db_password() -> str:
@@ -48,23 +48,27 @@ def db_password() -> str:
 
 
 PW = db_password()
+MYSQL = "docker exec coa-database mysql -uroot -p%s -N -e" % PW
+
+
+def sql(query: str) -> str:
+    return sh('%s "%s" 2>/dev/null' % (MYSQL, query))
 
 
 def snapshot() -> str:
     state = sh("docker inspect coa-worldserver --format '{{.State.Status}} restarts={{.RestartCount}}'")
     usage = sh("docker stats --no-stream --format '{{.MemUsage}} cpu={{.CPUPerc}}' coa-worldserver")
-    online = sh(
-        "docker exec coa-database mysql -uroot -p%s -N -e \"SELECT COUNT(*) FROM acore_characters.characters WHERE online=1\" 2>/dev/null"
-        % PW
-    )
-    real = sh(
-        "docker exec coa-database mysql -uroot -p%s -N -e \"SELECT c.name,c.level FROM acore_characters.characters c "
-        "JOIN acore_auth.account a ON a.id=c.account WHERE c.online=1 AND a.username NOT LIKE 'COABOTHOST%%'\" 2>/dev/null" % PW
-    )
+    bots = sql("SELECT COUNT(*) FROM acore_characters.characters c JOIN acore_auth.account a ON a.id=c.account "
+               "WHERE c.online=1 AND a.username LIKE 'COABOTHOST%'")
+    players = sql("SELECT c.name, c.level, c.xp, c.money, c.zone FROM acore_characters.characters c "
+                  "JOIN acore_auth.account a ON a.id=c.account WHERE c.online=1 "
+                  "AND a.username NOT LIKE 'COABOTHOST%' AND a.username NOT LIKE 'RNDBOT%'")
+    out = f"health: {state} {usage} bots_online={bots}"
+    for row in [r for r in players.split("\n") if r.strip()]:
+        name = row.split("\t")[0]
+        kills = sh("docker exec coa-worldserver grep -ac 'member %s' /azerothcore/env/dist/logs/Server.log" % name)
+        out += f" | player {row} kills_credited={kills}"
     dumps = sh("ls -1t %s/*.dmp %s/crashdumps/* 2>/dev/null | head -3" % (BASE, BASE))
-    out = f"health: {state} {usage} online={online}"
-    if real:
-        out += " player(s)=" + real.replace("\n", "; ")
     if dumps:
         out += " DUMPS=" + dumps.replace("\n", " ")
     return out
@@ -73,7 +77,7 @@ def snapshot() -> str:
 def main() -> None:
     note("monitor started; worldserver image " + sh("docker inspect coa-worldserver --format '{{.Image}}'"))
     offsets = {}
-    next_health = 0.0
+    next_health = time.time()  # snapshot immediately
     while True:
         for rel in FILES:
             path = os.path.join(BASE, rel)
@@ -81,16 +85,20 @@ def main() -> None:
                 size = os.path.getsize(path)
             except OSError:
                 continue
-            start = offsets.get(rel, size)  # start at the current end of file
+            start = offsets.get(rel, size)
             if size < start:
                 start = 0
             if size > start:
-                with open(path, errors="replace") as fh:
-                    fh.seek(start)
-                    chunk = fh.read()
-                    offsets[rel] = fh.tell()
+                try:
+                    with open(path, errors="replace") as fh:
+                        fh.seek(start)
+                        chunk = fh.read()
+                        offsets[rel] = fh.tell()
+                except OSError as exc:
+                    note(f"could not read {rel}: {exc}")
+                    continue
                 for line in chunk.splitlines():
-                    if PAT.search(line) and "BotMgr heartbeat" not in line:
+                    if line and not NOISE.search(line) and PAT.search(line):
                         note(rel + ": " + line)
         if time.time() >= next_health:
             next_health = time.time() + HEALTH_EVERY
