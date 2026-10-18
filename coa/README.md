@@ -472,3 +472,54 @@ python3 apps/coa-dbc/client_dbc.py diff root/Data/dbc client-dbc/out
 ./patch-client-dbc.sh client-dbc/out
 ```
 
+### Client-side supplement (Groot Coin icon + two addons) - 2026-10-18
+
+The players' client is missing three client-side files that the server side already assumes:
+
+- `Interface\Icons\INV_GrootCoin.blp` - item 910001 "Groot Coin" uses display id 990001
+  (`itemdisplayinfo_dbc.InventoryIcon_1 = INV_GrootCoin`). `CoA.SendDisplayPatches = 1` streams
+  row *metadata* only, never the texture, so a client without this file shows a red question mark.
+- `Interface\AddOns\AncientEnchantingAltars` - upstream 2026-10-15 (PR #6617); Outland altar
+  map markers, built on the client's own `DB_MapPOI`.
+- `Interface\AddOns\CoACrowsCache` - map markers for the High-Risk event; `CrowsCache.Enable`
+  is still 0 here, so it is inert for now.
+
+Proof that the client really lacks them: every MPQ of the local client
+(`/vol2/.../ascension-live/Data`, 66 archives, **747,700 entries**) was listed and searched -
+`INV_GrootCoin`, `AncientEnchantingAltars` and `CoACrowsCache` return **0** hits (icons live
+mostly in `patch-I.MPQ`, 76,062 entries).
+
+Where CoA itself puts such files: **inside `patch-B.MPQ`**. The 2026-09-19 login patch's
+`patch-B.MPQ` (16,865,074 bytes, `00734080f0...`) holds 1,406 files of which **643** are
+`Interface\AddOns\*`; the rev8 package's `patch-B.MPQ` (8,987,639 bytes, sha256
+`2701aa7fb417ab0a30c7614c6066fdfcfefb68bffc3b03bc216b5f32ca41d76b`) holds 1,314 files with
+**572** `Interface\AddOns\*` entries.
+
+| distribution form | size | notes |
+| --- | --- | --- |
+| `coa-client-update-mpq.zip` -> `Data/patch-ZG.MPQ` | MPQ 6,572 B, zip 8,120 B | **shipped**; this is upstream's own recipe for this icon (`modules/mod-ethereal-bazaar/client-art/build_client_patch.sh` builds a `patch-ZG.MPQ`, which sorts after `patch-Z`/`patch-ZH`); it touches no CoA file, so upstream client revisions never conflict |
+| `coa-client-update.zip` (loose files) | 7,717 B | equivalent; WoW gives loose files priority over MPQ |
+| patched `patch-B.MPQ` (+5 files, base = rev8) | 8,993,036 B | works, but it modifies an upstream artifact whose hash `CLIENT-RELEASE.json` records; every CoA client revision would have to be re-merged and a wrong base would downgrade the UI - **not shipped** |
+
+Player steps (either form): exit the game completely, put the file(s) in place
+(`Data\patch-ZG.MPQ`, or unzip loose files over the client root), **delete `Cache\WDB`**, start
+the game again. Rollback = delete the added file(s) plus `Cache\WDB`.
+
+Distribution channel: QQ group-file upload is blocked on the QQ side for the bot account in
+`SoulCore玩家群` (`rich media transfer failed` for every variant, including a 22-byte probe,
+while `upload_private_file` succeeds), so the package is delivered to the operator by private
+message until the bot is a group admin.
+
+Rebuild (pinned upstream ref `7c0ba643782eeec4814350f312fc0adfde5960c6`, needs `mpqcli`
+v0.13.0 from github.com/TheGrayDot/mpqcli):
+
+```bash
+cd coa/client-update
+COA_MPQCLI=/vol1/1000/docker/coa-fn176/tools/mpqcli ./build-client-mpq.sh   # -> coa-client-update-mpq.zip
+./build-client-update.sh                                                     # -> coa-client-update.zip (loose)
+```
+
+Both scripts assert the payload (BLP2 magic, `INV_GrootCoin.blp` sha256
+`3ca16759835b0974b8ec799a50f4024c6c9fcde636221f19e056b348e6b435ca`, exact file list) and pin
+timestamps, so the outputs are byte-reproducible; `build-client-mpq.sh` also extracts every MPQ
+member back and compares hashes.
