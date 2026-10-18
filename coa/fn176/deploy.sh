@@ -294,6 +294,19 @@ EOF
 else
     log "  [warn] no crontab command - run watchdog.sh/backup-db.sh manually"
 fi
+# ------------------------------------------------------------------ client DBC tables
+# The player client carries DBC rows the official server package does not (86 extra
+# CharBaseInfo race/class combinations for the CoA custom classes, 4 extra
+# SpellCustomAttr rows) and the core reads the player's own display tables from
+# Data/dbc_clientset.  Both gaps make the worldserver silently drop content, so install
+# them whenever a client extraction is available.  See README "Client DBC tables".
+if [ -n "${COA_CLIENT_DBC_DIR:-}" ] && [ -d "${COA_CLIENT_DBC_DIR}" ]; then
+    log "installing client DBC tables from $COA_CLIENT_DBC_DIR"
+    bash "$(dirname "$0")/patch-client-dbc.sh" "$COA_CLIENT_DBC_DIR"
+else
+    log "client DBC tables: skipped (export COA_CLIENT_DBC_DIR=<client dbc dir> to install them)"
+fi
+
 echo
 echo "logs:     docker compose logs -f coa-worldserver coa-authserver"
 echo "console:  ./botcmd.sh \"server info\""

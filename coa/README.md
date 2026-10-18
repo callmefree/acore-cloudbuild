@@ -423,3 +423,50 @@ Client: WotLK 3.3.5a with `realmlist.wtf` → `set realmlist soulcore.asia`
 (realm address/port in `acore_auth.realmlist` are `soulcore.asia:8085`, exactly as the
 legacy dump had them; LAN players can still use `192.168.1.176`).
 
+### Client DBC tables (`Data/dbc_clientset`) — 2026-10-18
+
+The worldserver's DBC set is not automatically the client's. Upstream
+`apps/coa-dbc/README.md` is explicit: `DataDir/dbc` "must hold the original CoA client's
+tables" — with a stock or partial set the core drops content that references CoA-only rows
+(item limit categories, gameobjects, currencies) — and client patches must not replace DBC
+archives. Two gaps were measured by extracting the player client's effective set (368 MPQ
+entries, 791 MB) and diffing it against the server package's 370 files:
+
+- `CharBaseInfo.dbc`: server 208 unique (race, class) pairs vs client 294. The missing 86
+  are exactly the CoA custom-class combinations — races 1-8 and 10-11 with classes 12-32
+  (`(1,14) (1,17) (1,26) (1,29) (1,31) (2,15) … (11,29)`).
+- `SpellCustomAttr.dbc`: the client has 4 extra rows (ids 58649-58652).
+- `Item.dbc` / `ItemAddon.dbc` / `ItemDisplayInfo.dbc`: here the **server** package has one
+  extra row each (item 558531 exists in `item_template`; one item references displayid
+  141229; `ItemAddon` has one trailing record), so the server copies are kept.
+- Every other table is byte-identical. The only name difference is casing
+  (`LFGDungeonExpansion.dbc` in the package vs `LfgDungeonExpansion.dbc` in the client),
+  which does not matter because the core loads the package's spelling.
+- `Server.log` also had three `Unable to open client DBC <DataDir>/dbc_clientset/…` lines
+  (CreatureDisplayInfo, ItemDisplayInfo, Item) with a degraded fallback —
+  "streaming every display id at or above 652000" / "streaming only the itemdisplayinfo_dbc
+  rows". With the directory in place those lines are gone (0 in the next run).
+
+`patch-client-dbc.sh` installs the union: it takes the client's `CharBaseInfo.dbc` and
+`SpellCustomAttr.dbc` (keeping the package copies as `*.serverpkg`) and fills
+`Data/dbc_clientset` with the client's CreatureDisplayInfo/ItemDisplayInfo/Item. `deploy.sh`
+runs it automatically when `COA_CLIENT_DBC_DIR` points at an extracted client set
+(otherwise it prints a skip notice).
+
+Verified after `docker compose up -d coa-worldserver` (2026-10-18 09:5x): 0 `dbc_clientset`
+lines, 0 DBC load errors, 0 `malformed packet`, container healthy in 2 min,
+`online=195` / 3569 characters, memory 5.55 GiB, CPU ~177 % with `MapUpdate.Threads = 2`
+(update diff 2 ms).
+
+Reproduce the extraction (needs a Linux `mpqcli` from github.com/TheGrayDot/mpqcli and the
+coa-dbc tool from the core checkout at the built commit `b80dfc9dc`):
+
+```bash
+CH=/vol2/1000/下载/Ascensionaa/Ascension/resources/ascension-live
+python3 apps/coa-dbc/client_dbc.py extract "$CH/Data" client-dbc/out --original \
+        --mpqcli /vol1/1000/docker/coa-fn176/tools/mpqcli
+python3 apps/coa-dbc/client_dbc.py check client-dbc/out      # 110 core tables, 0 problems
+python3 apps/coa-dbc/client_dbc.py diff root/Data/dbc client-dbc/out
+./patch-client-dbc.sh client-dbc/out
+```
+
