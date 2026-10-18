@@ -1,0 +1,7 @@
+{
+  "mysqlHost": "coa-database",
+  "mysqlPort": 3306,
+  "authPort": 3724,
+  "worldPort": 8085,
+  "realmAddress": "192.168.1.176"
+}

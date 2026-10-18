@@ -1,0 +1,20 @@
+# frp client for fn176. Same frps and token as the old server
+# (192.168.1.89:C:\COA\frp\frpc.toml) so it can publish through
+# soulcore.asia:7000, but it registers ONLY the register-site proxy -- the
+# game tunnels (3724/8085) stay on the old server until the cutover.
+#
+# The token is a secret: render this file with deploy.sh (COA_FRP_TOKEN in .env),
+# never commit the rendered frpc.toml.
+serverAddr = "soulcore.asia"
+serverPort = 7000
+loginFailExit = false
+
+auth.method = "token"
+auth.token = "<COA_FRP_TOKEN>"
+
+[[proxies]]
+name = "coa-register-8091"
+type = "tcp"
+localIP = "coa-register"
+localPort = 8090
+remotePort = 8091

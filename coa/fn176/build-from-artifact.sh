@@ -79,10 +79,7 @@ fi
 [ -f "$DOCKERFILE" ]  || { echo "Dockerfile.runtime not found next to $HERE" >&2; exit 1; }
 [ -f "$ENTRYPOINT" ]  || { echo "entrypoint.sh not found next to $HERE" >&2; exit 1; }
 cp "$ENTRYPOINT" "$CTX/entrypoint.sh"
-docker build -f "$DOCKERFILE" \
-    --build-arg "http_proxy=${PROXY_URL}" --build-arg "https_proxy=${PROXY_URL}" \
-    --build-arg "HTTP_PROXY=${PROXY_URL}" --build-arg "HTTPS_PROXY=${PROXY_URL}" \
-    -t "coa-server:${TAG}" -t coa-server:local "$CTX"
+docker build -f "$DOCKERFILE" -t "coa-server:${TAG}" -t coa-server:local "$CTX"
 
 log "smoke test"
 docker run --rm --entrypoint /azerothcore/env/dist/bin/worldserver coa-server:local --version
