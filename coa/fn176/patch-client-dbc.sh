@@ -28,16 +28,24 @@ for t in CharBaseInfo.dbc SpellCustomAttr.dbc; do
     echo "installed $t (server-package copy kept as $t.serverpkg)"
 done
 
-# 2. The client-set directory used for display streaming.  Item/ItemAddon/ItemDisplayInfo
-#    in the *server* package stay in dbc/ because each has one extra row the world DB
-#    references (item 558531, displayid 141229); dbc_clientset must hold what the player
-#    already has, i.e. the client's copies.
+# 2. The client-set directory used for display streaming.  It mirrors *all* of the
+#    client's tables: the core asks this directory for the copies the player already
+#    has (CreatureDisplayInfo/ItemDisplayInfo/Item are the ones it names in the log),
+#    and a partial set silently degrades to "stream every display id >= 652000" /
+#    "stream only the *_dbc rows".  Item/ItemAddon/ItemDisplayInfo in dbc/ stay the
+#    server-package versions, because those carry one extra row each that the world
+#    DB references (item 558531, displayid 141229).
 mkdir -p "$DATA/dbc_clientset"
-for t in CreatureDisplayInfo.dbc ItemDisplayInfo.dbc Item.dbc; do
-    [ -f "$SRC/$t" ] || { echo "missing $t in $SRC" >&2; exit 1; }
-    cp -a "$SRC/$t" "$DATA/dbc_clientset/$t"
-    echo "installed dbc_clientset/$t"
+count=0
+for f in "$SRC"/*.dbc; do
+    [ -e "$f" ] || continue
+    cp -a "$f" "$DATA/dbc_clientset/$(basename "$f")"
+    count=$((count + 1))
 done
+for t in CreatureDisplayInfo.dbc ItemDisplayInfo.dbc Item.dbc; do
+    [ -f "$DATA/dbc_clientset/$t" ] || { echo "missing $t in $SRC" >&2; exit 1; }
+done
+echo "mirrored $count client DBC tables into dbc_clientset/"
 
 chmod 644 "$DBC"/*.dbc "$DATA/dbc_clientset"/*.dbc 2>/dev/null || true
 echo "done - restart the worldserver: docker compose up -d coa-worldserver"

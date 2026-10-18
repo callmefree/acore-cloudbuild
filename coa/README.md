@@ -448,10 +448,12 @@ entries, 791 MB) and diffing it against the server package's 370 files:
   rows". With the directory in place those lines are gone (0 in the next run).
 
 `patch-client-dbc.sh` installs the union: it takes the client's `CharBaseInfo.dbc` and
-`SpellCustomAttr.dbc` (keeping the package copies as `*.serverpkg`) and fills
-`Data/dbc_clientset` with the client's CreatureDisplayInfo/ItemDisplayInfo/Item. `deploy.sh`
-runs it automatically when `COA_CLIENT_DBC_DIR` points at an extracted client set
-(otherwise it prints a skip notice).
+`SpellCustomAttr.dbc` (keeping the package copies as `*.serverpkg`) and mirrors the client's
+whole DBC set (368 tables) into `Data/dbc_clientset`. The directory is mirrored in full on
+purpose — the core asks it for the copies the player already has (it names
+CreatureDisplayInfo/ItemDisplayInfo/Item), and a partial set degrades to broad streaming.
+`deploy.sh` runs the script automatically when `COA_CLIENT_DBC_DIR` points at an extracted
+client set (otherwise it prints a skip notice).
 
 Verified after `docker compose up -d coa-worldserver` (2026-10-18 09:5x): 0 `dbc_clientset`
 lines, 0 DBC load errors, 0 `malformed packet`, container healthy in 2 min,
