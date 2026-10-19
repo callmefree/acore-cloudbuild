@@ -1,0 +1,29 @@
+diff --git a/src/cs_individualProgression.cpp b/src/cs_individualProgression.cpp
+index 04c15a3..284801e 100644
+--- a/src/cs_individualProgression.cpp
++++ b/src/cs_individualProgression.cpp
+@@ -101,8 +101,22 @@ public:
+             return false;
+         }
+ 
+-        player = PlayerIdentifier::FromTargetOrSelf(handler);
+-        Player* target = player->GetConnectedPlayer();
++        // Honor a player identifier given on the command line (e.g.
++        // `.ip set <name> <level>` issued over SOAP by the progression
++        // watcher) and only fall back to target-or-self when none was given.
++        // Dereferencing an empty Optional here crashed the worldserver: the
++        // resulting garbage Player* was passed to GetName() and the copy of
++        // that std::string faulted (C0000005, CLI command thread).
++        if (!player)
++            player = PlayerIdentifier::FromTargetOrSelf(handler);
++
++        Player* target = player ? player->GetConnectedPlayer() : nullptr;
++        if (!target)
++        {
++            handler->SendSysMessage("Player not found or not online.");
++            return false;
++        }
++
+         std::string playername = target->GetName();
+         uint8 currentState = sIndividualProgression->GetPlayerProgressionFromQuests(target);
+         uint32 currentArea = target->GetAreaId();
